@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from '../i18n.js';
 
 const LATENCY_CLASS = (ms) => {
   if (ms === null || ms === undefined) return 'offline';
@@ -45,6 +46,7 @@ export default function ServerList({
   onEdit,
   onDelete,
 }) {
+  const { t } = useTranslation();
   const [menuServer, setMenuServer] = useState(null);
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [hoveredId, setHoveredId] = useState(null);
@@ -83,9 +85,9 @@ export default function ServerList({
       <div className="empty-state" style={{ marginTop: 20 }}>
         <div className="empty-state-icon">🖥</div>
         <div className="empty-state-text">
-          暂无服务器
+          {t('暂无服务器')}
           <br />
-          点击右上角「添加」开始
+          {t('点击右上角「添加」开始')}
         </div>
       </div>
     );
@@ -234,25 +236,25 @@ export default function ServerList({
             className="context-menu-item"
             onClick={() => { onConnect(menuServer); setMenuServer(null); }}
           >
-            <span>🔗</span> 连接
+            <span>🔗</span> {t('连接')}
           </div>
           <div
             className="context-menu-item"
             onClick={() => { onEdit(menuServer); setMenuServer(null); }}
           >
-            <span>✏️</span> 编辑配置
+            <span>✏️</span> {t('编辑配置')}
           </div>
           <div className="context-menu-divider" />
           <div
             className="context-menu-item danger"
-            onClick={() => {
-              if (confirm(`确定删除服务器「${menuServer.name || menuServer.host}」？`)) {
+            onClick={async () => {
+              if (await window.aetherDialog?.confirm(`${t('确定删除服务器')}「${menuServer.name || menuServer.host}」？`)) {
                 onDelete(menuServer.id);
               }
               setMenuServer(null);
             }}
           >
-            <span>🗑</span> 删除
+            <span>🗑</span> {t('删除')}
           </div>
         </div>
       )}

@@ -1,13 +1,109 @@
 import { useState, useEffect } from 'react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
+import { setLanguage as setGlobalLanguage } from '../i18n.js';
 import logoImg from '../assets/logo.png';
 
+const I18N = {
+  'zh-CN': {
+    title: '设置',
+    tabs: { network: '网络', appearance: '外观', shortcuts: '快捷键', sync: '同步与云', app: '关于' },
+    about: {
+      version: '版本',
+      reportTitle: '反馈问题',
+      reportDesc: '生成预填的 GitHub issue',
+      communityTitle: '社区',
+      communityDesc: '参与 GitHub Discussions 讨论',
+      githubTitle: 'GitHub',
+      githubDesc: '源代码',
+      changelogTitle: '更新内容',
+      changelogDesc: '查看发布说明',
+    },
+    network: {
+      pingProtocolTitle: '延迟检测协议',
+      pingProtocolDesc: '选择如何测量服务器网络延迟，不同协议适用于不同的网络环境。',
+      sshLabel: 'SSH Banner RTT',
+      sshDesc: '通过读取 SSH 握手包测速，穿透 TUN 代理测出真实网络延迟，推荐',
+      sshTag: '推荐',
+      tcpLabel: 'TCP Dial',
+      tcpDesc: '通过 TCP 连接建立测速，适用于局域网/私有网络或未开代理的环境',
+      tip: '如果您使用 TUN 模式代理（Clash/V2Ray），推荐使用 SSH Banner RTT 模式，可以穿透代理测出真实延迟。',
+      refreshTitle: '监控刷新频率',
+      refreshDesc: '设置探针数据和延迟测试的自动刷新间隔。越高的频率越实时，但资源占用越大。',
+      probeRefresh: '探针刷新间隔',
+      pingRefresh: '延迟检测间隔',
+      fixed30s: '30 秒（固定）',
+    },
+    appearance: {
+      langTitle: '语言',
+      langLabel: '语言',
+      langDesc: '选择界面语言',
+      fontLabel: '界面字体',
+      fontDesc: '选择软件界面使用的字体',
+      themeTitle: '界面主题',
+      themeLabel: '主题',
+      themeDesc: '选择浅色、深色或跟随系统设置',
+      themeLight: '☀️ 浅色',
+      themeSys: '💻 系统',
+      themeDark: '🌙 深色',
+      accentTitle: '强调色',
+      accentLabel: '使用自定义强调色',
+      accentDesc: '覆盖主题自带的强调色',
+    }
+  },
+  'en-US': {
+    title: 'Settings',
+    tabs: { network: 'Network', appearance: 'Appearance', shortcuts: 'Shortcuts', sync: 'Sync & Cloud', app: 'About' },
+    about: {
+      version: 'Version',
+      reportTitle: 'Report an Issue',
+      reportDesc: 'Generate a pre-filled GitHub issue',
+      communityTitle: 'Community',
+      communityDesc: 'Join GitHub Discussions',
+      githubTitle: 'GitHub',
+      githubDesc: 'Source code',
+      changelogTitle: 'Changelog',
+      changelogDesc: 'View release notes',
+    },
+    network: {
+      pingProtocolTitle: 'Ping Protocol',
+      pingProtocolDesc: 'Choose how to measure server latency. Different protocols suit different networks.',
+      sshLabel: 'SSH Banner RTT',
+      sshDesc: 'Test via SSH handshake. Can penetrate TUN proxies to show real latency. Recommended.',
+      sshTag: 'Recommended',
+      tcpLabel: 'TCP Dial',
+      tcpDesc: 'Test via TCP connection. Best for LAN or non-proxied environments.',
+      tip: 'If using a TUN proxy (Clash/V2Ray), SSH Banner RTT is recommended to bypass the proxy and measure true latency.',
+      refreshTitle: 'Refresh Frequency',
+      refreshDesc: 'Set auto-refresh intervals for probe data and latency testing. Higher means more real-time, but uses more resources.',
+      probeRefresh: 'Probe Refresh Interval',
+      pingRefresh: 'Ping Interval',
+      fixed30s: '30 seconds (fixed)',
+    },
+    appearance: {
+      langTitle: 'Language',
+      langLabel: 'Language',
+      langDesc: 'Choose interface language',
+      fontLabel: 'Interface Font',
+      fontDesc: 'Choose the font used in the interface',
+      themeTitle: 'Interface Theme',
+      themeLabel: 'Theme',
+      themeDesc: 'Choose Light, Dark or System',
+      themeLight: '☀️ Light',
+      themeSys: '💻 System',
+      themeDark: '🌙 Dark',
+      accentTitle: 'Accent Color',
+      accentLabel: 'Use Custom Accent',
+      accentDesc: 'Override default accent color',
+    }
+  }
+};
+
 const TABS = [
-  { id: 'network', icon: '🌐', label: '网络' },
-  { id: 'appearance', icon: '🎨', label: '外观' },
-  { id: 'shortcuts', icon: '⌨️', label: '快捷键' },
-  { id: 'sync', icon: '☁️', label: '同步与云' },
-  { id: 'app', icon: 'ℹ️', label: '关于' },
+  { id: 'network', icon: '🌐' },
+  { id: 'appearance', icon: '🎨' },
+  { id: 'shortcuts', icon: '⌨️' },
+  { id: 'sync', icon: '☁️' },
+  { id: 'app', icon: 'ℹ️' },
 ];
 
 const defaultWebdavForm = {
@@ -18,6 +114,78 @@ const defaultWebdavForm = {
 };
 
 export default function SettingsModal({ onClose, addToast, onRestored }) {
+  const CURRENT_VERSION = '1.0.1';
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(-1);
+
+  useEffect(() => {
+    const handleProgress = (e) => {
+      if (typeof e.detail === 'number') {
+        setDownloadProgress(e.detail);
+      }
+    };
+    window.addEventListener('app-update-progress', handleProgress);
+    return () => window.removeEventListener('app-update-progress', handleProgress);
+  }, []);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await fetch('https://api.github.com/repos/angusdevgo/Aether-SSH/releases/latest');
+      if (!res.ok) throw new Error('API request failed');
+      const data = await res.json();
+      if (data && data.tag_name) {
+        let latest = data.tag_name;
+        if (latest.startsWith('v')) {
+           latest = latest.substring(1);
+        }
+        
+        // Find exe asset
+        let downloadAssetUrl = '';
+        if (data.assets && data.assets.length > 0) {
+           const exeAsset = data.assets.find(a => a.name.endsWith('.exe'));
+           if (exeAsset) downloadAssetUrl = exeAsset.browser_download_url;
+        }
+
+        if (latest !== CURRENT_VERSION && latest > CURRENT_VERSION) {
+          setUpdateInfo({
+            hasUpdate: true,
+            latestVersion: 'v' + latest,
+            url: downloadAssetUrl || data.html_url
+          });
+          addToast(language === 'zh-CN' ? '发现新版本: v' + latest : 'New version found: v' + latest, 'success');
+        } else {
+          addToast(language === 'zh-CN' ? '当前已是最新版本' : 'You are up to date', 'info');
+        }
+      }
+    } catch (err) {
+      addToast((language === 'zh-CN' ? '检查更新失败: ' : 'Check failed: ') + err.message, 'error');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleApplyUpdate = async () => {
+    if (!updateInfo || !updateInfo.url) return;
+    if (downloadProgress >= 0) return; // downloading
+    
+    if (!updateInfo.url.endsWith('.exe')) {
+       // Fallback to browser if no direct link
+       window.runtime?.BrowserOpenURL(updateInfo.url);
+       return;
+    }
+
+    setDownloadProgress(0);
+    try {
+      await AppGo.UpdateApp(updateInfo.url);
+      // Backend automatically exits process on success
+    } catch (err) {
+      addToast((language === 'zh-CN' ? '更新失败: ' : 'Update failed: ') + err, 'error');
+      setDownloadProgress(-1);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState('network');
 
   // WebDAV state
@@ -45,6 +213,8 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   const [useCustomAccent, setUseCustomAccent] = useState(localStorage.getItem('useCustomAccent') === 'true');
   const [language, setLanguage] = useState(localStorage.getItem('appLanguage') || 'zh-CN');
   const [appFont, setAppFont] = useState(localStorage.getItem('appFont') || 'system-ui');
+
+  const t = I18N[language] || I18N['zh-CN'];
 
   // Shortcuts state
   const defaultShortcuts = {
@@ -131,8 +301,8 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   const handleLanguageChange = (e) => {
     const lang = e.target.value;
     setLanguage(lang);
-    localStorage.setItem('appLanguage', lang);
-    addToast(`语言已切换至 ${lang === 'zh-CN' ? '简体中文' : 'English'} (重启后生效)`, 'success');
+    setGlobalLanguage(lang);
+    addToast(lang === 'zh-CN' ? '语言已切换至 简体中文' : 'Language switched to English', 'success');
   };
 
   const handleFontChange = (e) => {
@@ -255,7 +425,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
         
         {/* Settings Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-1)' }}>设置</div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-1)' }}>{t.title}</div>
           <button className="btn btn-ghost btn-icon" onClick={onClose} style={{ color: 'var(--text-3)' }}>✕</button>
         </div>
 
@@ -271,7 +441,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                 onClick={() => setActiveTab(tab.id)}
                 style={{ padding: '8px 12px', borderRadius: 'var(--radius-sm)' }}
               >
-                <span>{tab.icon}</span> {tab.label}
+                <span>{tab.icon}</span> {t.tabs[tab.id]}
               </div>
             ))}
           </div>
@@ -280,40 +450,9 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
           <div style={{ flex: 1, padding: '32px 48px', overflowY: 'auto', background: 'var(--bg-1)' }}>
             
             {activeTab === 'app' && (
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                minHeight: '340px',
-                height: '100%',
-              }}>
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  padding: '40px 48px',
-                  borderRadius: 24,
-                  background: 'linear-gradient(135deg, var(--bg-2) 0%, var(--bg-3) 100%)',
-                  border: '1px solid var(--border-light)',
-                  boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255,255,255,0.05)',
-                  width: '100%',
-                  maxWidth: 320,
-                  textAlign: 'center',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}>
-                  {/* 背景柔和的高级发光晕影 */}
-                  <div style={{
-                    position: 'absolute',
-                    top: '-30%',
-                    left: '-30%',
-                    width: '160%',
-                    height: '160%',
-                    background: 'radial-gradient(circle, rgba(16,185,129,0.08) 0%, rgba(0,0,0,0) 60%)',
-                    pointerEvents: 'none',
-                  }} />
-
+              <div style={{ display: 'flex', flexDirection: 'column', padding: '16px 24px', gap: 32, maxWidth: 640 }}>
+                {/* 顶部布局：图标与标题 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
                   <img 
                     src={logoImg} 
                     alt="Aether" 
@@ -321,47 +460,153 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                       width: 96, 
                       height: 96, 
                       borderRadius: 24, 
-                      boxShadow: '0 12px 28px rgba(0, 0, 0, 0.4)',
-                      marginBottom: 20,
-                      transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                      cursor: 'pointer',
+                      boxShadow: '0 12px 28px rgba(0, 0, 0, 0.25)',
+                      border: '1px solid var(--border-light)'
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.08) rotate(3deg)'}
-                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1) rotate(0deg)'}
                   />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ 
+                      fontSize: 32, 
+                      fontWeight: 800, 
+                      color: 'var(--text-1)',
+                      letterSpacing: '-0.5px'
+                    }}>
+                      Aether
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ fontSize: 14, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
+                        {CURRENT_VERSION}
+                      </span>
+                      {updateInfo?.hasUpdate && (
+                        <span 
+                          onClick={handleApplyUpdate}
+                          style={{ 
+                            background: downloadProgress >= 0 ? '#1e3a8a' : '#065f46', 
+                            color: downloadProgress >= 0 ? '#93c5fd' : '#34d399', 
+                            borderRadius: 12, 
+                            padding: '2px 8px', 
+                            fontSize: 12, 
+                            fontWeight: 600,
+                            cursor: downloadProgress >= 0 ? 'default' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            boxShadow: downloadProgress >= 0 ? '0 2px 8px rgba(30,58,138,0.3)' : '0 2px 8px rgba(6,95,70,0.3)',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            minWidth: 80,
+                            justifyContent: 'center'
+                          }}
+                        >
+                          {downloadProgress >= 0 && (
+                            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, background: 'rgba(59, 130, 246, 0.4)', width: `${downloadProgress}%`, transition: 'width 0.2s ease-out' }}></div>
+                          )}
+                          <span style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            {downloadProgress >= 0 ? (
+                               <>
+                                 <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+                                 {downloadProgress}%
+                               </>
+                            ) : (
+                               <>
+                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                                 {updateInfo.latestVersion} {language === 'zh-CN' ? '立即更新' : 'Update Now'}
+                               </>
+                            )}
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-                  <div style={{ 
-                    fontSize: 24, 
-                    fontWeight: 800, 
-                    color: 'var(--text-1)',
-                    letterSpacing: '-0.5px',
-                    marginBottom: 8,
-                    background: 'linear-gradient(to right, var(--text-1), #10b981)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                  }}>
-                    Aether
+                <div style={{ marginTop: 0 }}>
+                  <button 
+                    onClick={handleCheckUpdate}
+                    disabled={checkingUpdate}
+                    style={{ 
+                      background: 'var(--bg-2)', 
+                      color: 'var(--text-3)', 
+                      border: '1px solid var(--border)', 
+                      borderRadius: 8, 
+                      padding: '6px 16px', 
+                      fontSize: 13, 
+                      fontWeight: 500,
+                      cursor: checkingUpdate ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      transition: 'all 0.2s',
+                      opacity: checkingUpdate ? 0.7 : 1
+                    }}
+                    onMouseEnter={(e) => { if(!checkingUpdate) { e.currentTarget.style.background = 'var(--bg-3)'; e.currentTarget.style.color = 'var(--text-2)'; } }}
+                    onMouseLeave={(e) => { if(!checkingUpdate) { e.currentTarget.style.background = 'var(--bg-2)'; e.currentTarget.style.color = 'var(--text-3)'; } }}
+                  >
+                    <svg className={checkingUpdate ? 'spin' : ''} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+                    {checkingUpdate 
+                       ? (language === 'zh-CN' ? '检查中...' : 'Checking...') 
+                       : (language === 'zh-CN' ? '检查更新' : 'Check Updates')}
+                  </button>
+                </div>
+
+                {/* 列表项 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+                  <div 
+                    onClick={() => window.runtime?.BrowserOpenURL('https://github.com/angusdevgo/Aether-SSH/issues/new')}
+                    className="about-list-item"
+                    style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px', borderRadius: 'var(--radius-md)', cursor: 'pointer', transition: 'all 0.2s', background: 'var(--bg-2)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-3)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'var(--bg-2)'}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-2)' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15L15 15"></path><path d="M12 12L12 18"></path></svg>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>{t.about.reportTitle}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{t.about.reportDesc}</span>
+                    </div>
                   </div>
 
-                  <div style={{ 
-                    fontSize: 13, 
-                    color: 'var(--text-4)',
-                    fontWeight: 500,
-                    letterSpacing: '0.5px',
-                  }}>
-                    版本 1.0.0
+                  <div 
+                    onClick={() => window.runtime?.BrowserOpenURL('https://github.com/angusdevgo/Aether-SSH/discussions')}
+                    className="about-list-item"
+                    style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px', borderRadius: 'var(--radius-md)', cursor: 'pointer', transition: 'all 0.2s', background: 'var(--bg-2)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-3)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'var(--bg-2)'}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-2)' }}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>{t.about.communityTitle}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{t.about.communityDesc}</span>
+                    </div>
                   </div>
 
-                  <div style={{ 
-                    fontSize: 11, 
-                    color: 'var(--text-4)',
-                    opacity: 0.7,
-                    marginTop: 6,
-                    fontFamily: 'var(--font-mono)',
-                    letterSpacing: '0.5px',
-                  }}>
-                    by @Angus
+                  <div 
+                    onClick={() => window.runtime?.BrowserOpenURL('https://github.com/angusdevgo/Aether-SSH')}
+                    className="about-list-item"
+                    style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px', borderRadius: 'var(--radius-md)', cursor: 'pointer', transition: 'all 0.2s', background: 'var(--bg-2)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-3)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'var(--bg-2)'}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-2)' }}><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>{t.about.githubTitle}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{t.about.githubDesc}</span>
+                    </div>
                   </div>
+
+                  <div 
+                    onClick={() => window.runtime?.BrowserOpenURL('https://github.com/angusdevgo/Aether-SSH/releases')}
+                    className="about-list-item"
+                    style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px', borderRadius: 'var(--radius-md)', cursor: 'pointer', transition: 'all 0.2s', background: 'var(--bg-2)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-3)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'var(--bg-2)'}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-2)' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>{t.about.changelogTitle}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{t.about.changelogDesc}</span>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -370,12 +615,12 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
                 {/* 延迟检测协议 */}
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', marginBottom: 4 }}>延迟检测协议</div>
-                  <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 20 }}>选择如何测量服务器网络延迟，不同协议适用于不同的网络环境。</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', marginBottom: 4 }}>{t.network.pingProtocolTitle}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 20 }}>{t.network.pingProtocolDesc}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {[
-                      { id: 'ssh', label: 'SSH Banner RTT', desc: '通过读取 SSH 握手包测速，穿透 TUN 代理测出真实网络延迟，推荐', tag: '推荐' },
-                      { id: 'tcp', label: 'TCP Dial', desc: '通过 TCP 连接建立测速，适用于局域网/私有网络或未开代理的环境' },
+                      { id: 'ssh', label: t.network.sshLabel, desc: t.network.sshDesc, tag: t.network.sshTag },
+                      { id: 'tcp', label: t.network.tcpLabel, desc: t.network.tcpDesc },
                     ].map(opt => (
                       <div
                         key={opt.id}
@@ -406,17 +651,17 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                     ))}
                   </div>
                   <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--bg-2)', borderRadius: 8, fontSize: 12, color: 'var(--text-4)', lineHeight: 1.7, border: '1px solid var(--border-light)' }}>
-                    💡 <strong style={{ color: 'var(--text-3)' }}>提示：</strong>如果您使用 TUN 模式代理（Clash/V2Ray），推荐使用 <strong>SSH Banner RTT</strong> 模式，可以穿透代理测出真实延迟。
+                    💡 <strong style={{ color: 'var(--text-3)' }}>提示：</strong>{t.network.tip}
                   </div>
                 </div>
 
                 {/* 监控刷新频率 */}
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', marginBottom: 4 }}>监控刷新频率</div>
-                  <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 20 }}>设置探针数据和延迟测试的自动刷新间隔。越高的频率越实时，但资源占用越大。</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-1)', marginBottom: 4 }}>{t.network.refreshTitle}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 20 }}>{t.network.refreshDesc}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 13, color: 'var(--text-2)' }}>探针刷新间隔</span>
+                      <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{t.network.probeRefresh}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {[3, 5, 10, 30].map(s => (
                           <button
@@ -434,8 +679,8 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 13, color: 'var(--text-2)' }}>延迟检测间隔</span>
-                      <span style={{ fontSize: 12, color: 'var(--text-4)' }}>30 秒（固定）</span>
+                      <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{t.network.pingRefresh}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{t.network.fixed30s}</span>
                     </div>
                   </div>
                 </div>
@@ -445,12 +690,12 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
             {activeTab === 'appearance' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
                 <div>
-                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>语言</h3>
+                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>{t.appearance.langTitle}</h3>
                   <div className="form-group" style={{ background: 'var(--bg-2)', padding: 16, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
-                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>语言</div>
-                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>选择界面语言</div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.langLabel}</div>
+                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.langDesc}</div>
                       </div>
                       <select className="select" style={{ width: 200 }} value={language} onChange={handleLanguageChange}>
                         <option value="zh-CN">简体中文</option>
@@ -460,8 +705,8 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                     <div className="divider" style={{ margin: '12px 0', borderTop: '1px solid var(--border)' }} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
-                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>界面字体</div>
-                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>选择软件界面使用的字体</div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.fontLabel}</div>
+                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.fontDesc}</div>
                       </div>
                       <select className="select" style={{ width: 200 }} value={appFont} onChange={handleFontChange}>
                         <option value="system-ui">系统默认</option>
@@ -474,29 +719,29 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                 </div>
 
                 <div>
-                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>界面主题</h3>
+                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>{t.appearance.themeTitle}</h3>
                   <div className="form-group" style={{ background: 'var(--bg-2)', padding: 16, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
-                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>主题</div>
-                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>选择浅色、深色或跟随系统设置</div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.themeLabel}</div>
+                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.themeDesc}</div>
                       </div>
                       <div style={{ display: 'flex', background: 'var(--bg-1)', borderRadius: 'var(--radius-xl)', padding: 4, border: '1px solid var(--border)' }}>
-                        <button className={`btn btn-sm ${themeMode === 'light' ? 'btn-secondary' : 'btn-ghost'}`} onClick={() => handleThemeChange('light')} style={{ borderRadius: 'var(--radius-xl)', background: themeMode === 'light' ? 'var(--bg-3)' : 'transparent' }}>☀️ 浅色</button>
-                        <button className={`btn btn-sm ${themeMode === 'system' ? 'btn-secondary' : 'btn-ghost'}`} onClick={() => handleThemeChange('system')} style={{ borderRadius: 'var(--radius-xl)', background: themeMode === 'system' ? 'var(--bg-3)' : 'transparent' }}>💻 系统</button>
-                        <button className={`btn btn-sm ${themeMode === 'dark' ? 'btn-secondary' : 'btn-ghost'}`} onClick={() => handleThemeChange('dark')} style={{ borderRadius: 'var(--radius-xl)', background: themeMode === 'dark' ? 'var(--bg-3)' : 'transparent' }}>🌙 深色</button>
+                        <button className={`btn btn-sm ${themeMode === 'light' ? 'btn-secondary' : 'btn-ghost'}`} onClick={() => handleThemeChange('light')} style={{ borderRadius: 'var(--radius-xl)', background: themeMode === 'light' ? 'var(--bg-3)' : 'transparent' }}>{t.appearance.themeLight}</button>
+                        <button className={`btn btn-sm ${themeMode === 'system' ? 'btn-secondary' : 'btn-ghost'}`} onClick={() => handleThemeChange('system')} style={{ borderRadius: 'var(--radius-xl)', background: themeMode === 'system' ? 'var(--bg-3)' : 'transparent' }}>{t.appearance.themeSys}</button>
+                        <button className={`btn btn-sm ${themeMode === 'dark' ? 'btn-secondary' : 'btn-ghost'}`} onClick={() => handleThemeChange('dark')} style={{ borderRadius: 'var(--radius-xl)', background: themeMode === 'dark' ? 'var(--bg-3)' : 'transparent' }}>{t.appearance.themeDark}</button>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>强调色</h3>
+                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>{t.appearance.accentTitle}</h3>
                   <div className="form-group" style={{ background: 'var(--bg-2)', padding: 16, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                       <div>
-                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>使用自定义强调色</div>
-                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>覆盖主题自带的强调色</div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.accentLabel}</div>
+                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.accentDesc}</div>
                       </div>
                       <div 
                         onClick={handleToggleAccent}

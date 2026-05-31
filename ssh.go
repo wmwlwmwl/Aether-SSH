@@ -834,6 +834,36 @@ func (m *SSHManager) RenameItem(sessionId string, oldPath string, newPath string
 	return s.SFTP.Rename(oldPath, newPath)
 }
 
+// progressReader wraps an io.Reader and emits progress events via Wails.
+type progressReader struct {
+	io.Reader
+	ctx       context.Context
+	sessionId string
+	total     int64
+	current   int64
+	lastEmit  time.Time
+}
+
+func (p *progressReader) Read(data []byte) (int, error) {
+	n, err := p.Reader.Read(data)
+	if n > 0 {
+		p.current += int64(n)
+		now := time.Now()
+		if now.Sub(p.lastEmit) > 200*time.Millisecond || p.current >= p.total {
+			pct := float64(0)
+			if p.total > 0 {
+				pct = float64(p.current) / float64(p.total) * 100
+				if pct > 100 { pct = 100 }
+			}
+			if p.ctx != nil {
+				runtime.EventsEmit(p.ctx, "transfer-progress-"+p.sessionId, pct)
+			}
+			p.lastEmit = now
+		}
+	}
+	return n, err
+}
+
 func (m *SSHManager) UploadFile(sessionId string, localPath string, remotePath string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[sessionId]
@@ -855,7 +885,21 @@ func (m *SSHManager) UploadFile(sessionId string, localPath string, remotePath s
 	}
 	defer dst.Close()
 
-	_, err = io.Copy(dst, src)
+	var totalSize int64 = 0
+	if stat, err := src.Stat(); err == nil {
+		totalSize = stat.Size()
+	}
+
+	pr := &progressReader{
+		Reader:    src,
+		ctx:       m.ctx,
+		sessionId: sessionId,
+		total:     totalSize,
+		lastEmit:  time.Now(),
+	}
+
+	buf := make([]byte, 2*1024*1024) // 2MB buffer
+	_, err = io.CopyBuffer(dst, pr, buf)
 	return err
 }
 
@@ -879,6 +923,77 @@ func (m *SSHManager) DownloadFile(sessionId string, remotePath string, localPath
 	}
 	defer dst.Close()
 
-	_, err = io.Copy(dst, src)
+	var totalSize int64 = 0
+	if stat, err := src.Stat(); err == nil {
+		totalSize = stat.Size()
+	}
+
+	pr := &progressReader{
+		Reader:    src,
+		ctx:       m.ctx,
+		sessionId: sessionId,
+		total:     totalSize,
+		lastEmit:  time.Now(),
+	}
+
+	buf := make([]byte, 2*1024*1024) // 2MB buffer
+	_, err = io.CopyBuffer(dst, pr, buf)
 	return err
+}
+
+func (m *SSHManager) CompressItem(sessionId string, remotePath string) error {
+	m.mu.Lock()
+	s, ok := m.sessions[sessionId]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+
+	dir := filepath.Dir(remotePath)
+	base := filepath.Base(remotePath)
+	archiveName := base + ".tar.gz"
+
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	cmd := fmt.Sprintf("cd '%s' && tar -czf '%s' '%s'", dir, archiveName, base)
+	
+	out, err := m.executeCmd(s, cmd)
+	if err != nil {
+		return fmt.Errorf("compress failed: %v, output: %s", err, out)
+	}
+	return nil
+}
+
+func (m *SSHManager) UncompressItem(sessionId string, remotePath string) error {
+	m.mu.Lock()
+	s, ok := m.sessions[sessionId]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+
+	dir := filepath.Dir(remotePath)
+	base := filepath.Base(remotePath)
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	
+	var cmd string
+	lowerBase := strings.ToLower(base)
+	if strings.HasSuffix(lowerBase, ".zip") {
+		cmd = fmt.Sprintf("cd '%s' && unzip -o '%s'", dir, base)
+	} else if strings.HasSuffix(lowerBase, ".tar.gz") || strings.HasSuffix(lowerBase, ".tgz") {
+		cmd = fmt.Sprintf("cd '%s' && tar -xzf '%s'", dir, base)
+	} else if strings.HasSuffix(lowerBase, ".tar") {
+		cmd = fmt.Sprintf("cd '%s' && tar -xf '%s'", dir, base)
+	} else if strings.HasSuffix(lowerBase, ".tar.bz2") || strings.HasSuffix(lowerBase, ".tbz2") {
+		cmd = fmt.Sprintf("cd '%s' && tar -xjf '%s'", dir, base)
+	} else if strings.HasSuffix(lowerBase, ".gz") {
+		cmd = fmt.Sprintf("cd '%s' && gunzip -f -k '%s'", dir, base)
+	} else {
+		return fmt.Errorf("unsupported archive format")
+	}
+
+	out, err := m.executeCmd(s, cmd)
+	if err != nil {
+		return fmt.Errorf("uncompress failed: %v, output: %s", err, out)
+	}
+	return nil
 }

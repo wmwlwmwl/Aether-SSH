@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import FileEditor from './FileEditor.jsx';
+import { useTranslation } from '../i18n.js';
 
 // 格式化文件大小
 function fmtSize(bytes) {
@@ -56,8 +57,14 @@ function isEditable(name) {
   return false;
 }
 
+// 判断是否为压缩包
+function isArchive(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return ['zip', 'tar', 'gz', 'bz2', 'tgz', 'rar', '7z'].includes(ext) || name.toLowerCase().endsWith('.tar.gz');
+}
+
 // Context menu component
-function ContextMenu({ pos, item, onClose, onDownload, onEdit, onRename, onDelete, onMkdir }) {
+function ContextMenu({ pos, item, onClose, onDownload, onEdit, onRename, onDelete, onMkdir, onCompress, onUncompress, t }) {
   const ref = useRef(null);
   useEffect(() => {
     const handler = (e) => {
@@ -75,26 +82,38 @@ function ContextMenu({ pos, item, onClose, onDownload, onEdit, onRename, onDelet
     >
       {item && !item.isDirectory && isEditable(item.name) && (
         <div className="context-menu-item" onClick={onEdit}>
-          <span>✏️</span> 编辑
+          <span>✏️</span> {t('编辑')}
         </div>
       )}
       {item && !item.isDirectory && (
         <div className="context-menu-item" onClick={onDownload}>
-          <span>⬇️</span> 下载到本地
+          <span>⬇️</span> {t('下载到本地')}
         </div>
       )}
-      <div className="context-menu-item" onClick={onRename}>
-        <span>✏</span> 重命名
-      </div>
+      {item && (
+        <div className="context-menu-item" onClick={onCompress}>
+          <span>📦</span> {t('压缩 (tar.gz)')}
+        </div>
+      )}
+      {item && !item.isDirectory && isArchive(item.name) && (
+        <div className="context-menu-item" onClick={onUncompress}>
+          <span>🗜</span> {t('解压')}
+        </div>
+      )}
+      {item && (
+        <div className="context-menu-item" onClick={onRename}>
+          <span>✏</span> {t('重命名')}
+        </div>
+      )}
       <div className="context-menu-divider" />
       {!item && (
         <div className="context-menu-item" onClick={onMkdir}>
-          <span>📁</span> 新建文件夹
+          <span>📁</span> {t('新建文件夹')}
         </div>
       )}
       {item && (
         <div className="context-menu-item danger" onClick={onDelete}>
-          <span>🗑</span> 删除
+          <span>🗑</span> {t('删除')}
         </div>
       )}
     </div>
@@ -102,6 +121,7 @@ function ContextMenu({ pos, item, onClose, onDownload, onEdit, onRename, onDelet
 }
 
 export default function FileManager({ sessionId, addToast }) {
+  const { t } = useTranslation();
   const [currentPath, setCurrentPath] = useState('/');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -127,6 +147,18 @@ export default function FileManager({ sessionId, addToast }) {
 
   useEffect(() => { loadDir('/'); }, [loadDir]);
 
+  useEffect(() => {
+    const handleProgress = (e) => {
+      setTransferInfo(prev => {
+        if (!prev) return prev;
+        return { ...prev, progress: e.detail };
+      });
+    };
+    const eventName = `transfer-progress-${sessionId}`;
+    window.addEventListener(eventName, handleProgress);
+    return () => window.removeEventListener(eventName, handleProgress);
+  }, [sessionId]);
+
   // Breadcrumb parts
   const pathParts = currentPath === '/'
     ? [{ label: '/', path: '/' }]
@@ -148,7 +180,7 @@ export default function FileManager({ sessionId, addToast }) {
   // Upload file via Wails native file dialog
   const handleUpload = async () => {
     try {
-      setTransferInfo({ name: '正在选择文件...', progress: 50, direction: 'upload' });
+      setTransferInfo({ name: '正在选择文件...', progress: 0, direction: 'upload' });
       await AppGo.UploadFile(sessionId, currentPath);
       addToast(`上传成功`, 'success');
       await loadDir(currentPath);
@@ -166,7 +198,7 @@ export default function FileManager({ sessionId, addToast }) {
       : `${currentPath}/${item.name}`;
     
     try {
-      setTransferInfo({ name: item.name, progress: 50, direction: 'download' });
+      setTransferInfo({ name: item.name, progress: 0, direction: 'download' });
       await AppGo.DownloadFile(sessionId, remotePath);
       addToast(`下载成功: ${item.name}`, 'success');
     } catch (err) {
@@ -205,7 +237,7 @@ export default function FileManager({ sessionId, addToast }) {
     const remotePath = currentPath === '/'
       ? `/${item.name}`
       : `${currentPath}/${item.name}`;
-    if (!confirm(`确定删除「${item.name}」？此操作不可撤销`)) return;
+    if (!(await window.aetherDialog?.confirm(`确定删除「${item.name}」？此操作不可撤销`))) return;
     try {
       await AppGo.DeleteItem(sessionId, remotePath, item.isDirectory);
       addToast(`已删除: ${item.name}`, 'success');
@@ -217,7 +249,7 @@ export default function FileManager({ sessionId, addToast }) {
 
   // Create directory
   const handleMkdir = async () => {
-    const name = prompt('新文件夹名称:');
+    const name = await window.aetherDialog?.prompt('新文件夹名称:');
     if (!name) return;
     const remotePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
     try {
@@ -226,6 +258,36 @@ export default function FileManager({ sessionId, addToast }) {
       await loadDir(currentPath);
     } catch (err) {
       addToast(`创建失败: ${err}`, 'error');
+    }
+  };
+
+  // Compress
+  const handleCompress = async (item) => {
+    const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
+    try {
+      setLoading(true);
+      addToast(`正在压缩 ${item.name}...`, 'info');
+      await AppGo.CompressItem(sessionId, remotePath);
+      addToast('压缩成功', 'success');
+      await loadDir(currentPath);
+    } catch (err) {
+      addToast(`压缩失败: ${err}`, 'error');
+      setLoading(false);
+    }
+  };
+
+  // Uncompress
+  const handleUncompress = async (item) => {
+    const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
+    try {
+      setLoading(true);
+      addToast(`正在解压 ${item.name}...`, 'info');
+      await AppGo.UncompressItem(sessionId, remotePath);
+      addToast('解压成功', 'success');
+      await loadDir(currentPath);
+    } catch (err) {
+      addToast(`解压失败: ${err}`, 'error');
+      setLoading(false);
     }
   };
 
@@ -280,9 +342,9 @@ export default function FileManager({ sessionId, addToast }) {
           ))}
         </div>
 
-        <button className="btn btn-secondary btn-sm" onClick={handleMkdir}>📁 新建文件夹</button>
+        <button className="btn btn-secondary btn-sm" onClick={handleMkdir}>📁 {t('新建文件夹')}</button>
         <button className="btn btn-secondary btn-sm" onClick={handleUpload}>
-          ⬆ 上传文件
+          ⬆ {t('上传文件')}
         </button>
         <button
           className="btn btn-ghost btn-sm btn-icon"
@@ -296,9 +358,9 @@ export default function FileManager({ sessionId, addToast }) {
       {/* File List */}
       <div className="file-list">
         <div className="file-list-header">
-          <span>名称</span>
-          <span>大小</span>
-          <span>修改时间</span>
+          <span>{t('名称')}</span>
+          <span>{t('大小')}</span>
+          <span>{t('修改时间')}</span>
           <span></span>
         </div>
 
@@ -324,14 +386,14 @@ export default function FileManager({ sessionId, addToast }) {
         {loading && (
           <div className="empty-state">
             <div className="spin" style={{ fontSize: 24 }}>⟳</div>
-            <div className="empty-state-text">加载中...</div>
+            <div className="empty-state-text">{t('加载中...')}</div>
           </div>
         )}
 
         {!loading && items.length === 0 && (
           <div className="empty-state">
             <div className="empty-state-icon">📂</div>
-            <div className="empty-state-text">目录为空</div>
+            <div className="empty-state-text">{t('目录为空')}</div>
           </div>
         )}
 
@@ -412,12 +474,15 @@ export default function FileManager({ sessionId, addToast }) {
         <ContextMenu
           pos={contextMenu.pos}
           item={contextMenu.item}
+          t={t}
           onClose={closeContextMenu}
           onDownload={() => { handleDownload(contextMenu.item); closeContextMenu(); }}
           onEdit={() => { handleEdit(contextMenu.item); closeContextMenu(); }}
           onRename={() => { startRename(contextMenu.item); closeContextMenu(); }}
           onDelete={() => { handleDelete(contextMenu.item); closeContextMenu(); }}
           onMkdir={() => { handleMkdir(); closeContextMenu(); }}
+          onCompress={() => { handleCompress(contextMenu.item); closeContextMenu(); }}
+          onUncompress={() => { handleUncompress(contextMenu.item); closeContextMenu(); }}
         />
       )}
 
@@ -425,7 +490,7 @@ export default function FileManager({ sessionId, addToast }) {
       {transferInfo && (
         <div className="transfer-toast">
           <div className="transfer-toast-title">
-            {transferInfo.direction === 'upload' ? '⬆ 上传中' : '⬇ 下载中'}: {transferInfo.name}
+            {transferInfo.direction === 'upload' ? `⬆ ${t('上传中') || '上传中'}` : `⬇ ${t('下载中') || '下载中'}`}: {transferInfo.name}
           </div>
           <div className="progress-bar-track">
             <div

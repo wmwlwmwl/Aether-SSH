@@ -6,6 +6,10 @@ export function BackupToWebdav() {
   return window['go']['main']['App']['BackupToWebdav']();
 }
 
+export function CompressItem(arg1, arg2) {
+  return window['go']['main']['App']['CompressItem'](arg1, arg2);
+}
+
 export function ConnectSSH(arg1, arg2) {
   return window['go']['main']['App']['ConnectSSH'](arg1, arg2);
 }
@@ -84,6 +88,14 @@ export function SystemInfo(arg1) {
 
 export function TestWebdavConnection(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestWebdavConnection'](arg1, arg2, arg3);
+}
+
+export function UncompressItem(arg1, arg2) {
+  return window['go']['main']['App']['UncompressItem'](arg1, arg2);
+}
+
+export function UpdateApp(arg1) {
+  return window['go']['main']['App']['UpdateApp'](arg1);
 }
 
 export function UploadFile(arg1, arg2) {

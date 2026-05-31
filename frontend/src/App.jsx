@@ -9,10 +9,13 @@ import FileManager from './components/FileManager.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import Toast from './components/Toast.jsx';
 import CommandHistory from './components/CommandHistory.jsx';
+import GlobalDialog from './components/GlobalDialog.jsx';
+import { useTranslation } from './i18n.js';
 
 import logoImg from './assets/logo.png';
 
 export default function App() {
+  const { t } = useTranslation();
   const [servers, setServers] = useState([]);
   const [pings, setPings] = useState({});
   const [sessions, setSessions] = useState([]);      // { id, serverId, serverName, host, status, osInfo }
@@ -78,7 +81,7 @@ export default function App() {
         setQuickKey(content);
       }
     } catch (e) {
-      if (e) alert(`读取私钥文件失败: ${e}`);
+      if (e) window.aetherDialog?.alert(`读取私钥文件失败: ${e}`, '错误');
     }
   };
 
@@ -92,7 +95,7 @@ export default function App() {
   // ── 闪电直连逻辑 ────────────────────────────────────────
   const handleQuickConnectDirect = async (e) => {
     if (e) e.preventDefault();
-    if (!quickHost.trim()) return alert('请填写主机地址');
+    if (!quickHost.trim()) return window.aetherDialog?.alert('请填写主机地址');
 
     const tempId = `temp_${Date.now()}`;
     const tempServer = {
@@ -427,52 +430,52 @@ export default function App() {
               <div className="glass-card quick-connect-box">
                 <div className="card-header-icon-title">
                   <span className="card-header-icon">⚡</span>
-                  <span className="card-header-title">闪电直连</span>
+                  <span className="card-header-title">{t('闪电直连')}</span>
                 </div>
                 <form onSubmit={handleQuickConnectDirect} className="quick-connect-form">
                   <div className="form-group-compact">
-                    <label>服务器别名（选填）</label>
-                    <input className="input-compact" placeholder="例如：我的测试服" value={quickName} onChange={e => setQuickName(e.target.value)} />
+                    <label>{t('服务器别名（选填）')}</label>
+                    <input className="input-compact" placeholder={t('例如：我的测试服')} value={quickName} onChange={e => setQuickName(e.target.value)} />
                   </div>
                   <div className="form-group-compact">
-                    <label>主机地址 *</label>
+                    <label>{t('主机地址 *')}</label>
                     <div className="form-row-compact">
                       <input className="input-compact" style={{ flex: 3 }} placeholder="192.168.1.1" value={quickHost} onChange={e => setQuickHost(e.target.value)} required />
                       <input className="input-compact" style={{ flex: 1.2 }} placeholder="22" value={quickPort} onChange={e => setQuickPort(e.target.value)} />
                     </div>
                   </div>
                   <div className="form-group-compact">
-                    <label>用户名</label>
+                    <label>{t('用户名')}</label>
                     <input className="input-compact" placeholder="root" value={quickUser} onChange={e => setQuickUser(e.target.value)} />
                   </div>
                   <div className="form-group-compact">
-                    <label>认证方式</label>
+                    <label>{t('认证方式')}</label>
                     <select className="select-compact" value={quickAuth} onChange={e => setQuickAuth(e.target.value)}>
-                      <option value="password">密码认证</option>
-                      <option value="key">私钥认证</option>
+                      <option value="password">{t('密码认证')}</option>
+                      <option value="key">{t('私钥认证')}</option>
                     </select>
                   </div>
                   {quickAuth === 'password' ? (
                     <div className="form-group-compact">
-                      <label>密码</label>
-                      <input className="input-compact" type="password" placeholder="请输入密码" value={quickPass} onChange={e => setQuickPass(e.target.value)} />
+                      <label>{t('密码')}</label>
+                      <input className="input-compact" type="password" placeholder={t('请输入密码')} value={quickPass} onChange={e => setQuickPass(e.target.value)} />
                     </div>
                   ) : (
                     <>
                       <div className="form-group-compact">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <label style={{ marginBottom: 0 }}>私钥内容</label>
-                          <button type="button" className="btn-text-action" onClick={handleQuickPrivateKeyFile}>📁 浏览</button>
+                          <label style={{ marginBottom: 0 }}>{t('私钥内容')}</label>
+                          <button type="button" className="btn-text-action" onClick={handleQuickPrivateKeyFile}>📁 {t('浏览')}</button>
                         </div>
                         <textarea className="textarea-compact" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={quickKey} onChange={e => setQuickKey(e.target.value)} />
                       </div>
                       <div className="form-group-compact">
-                        <label>私钥密码短语 (可选)</label>
-                        <input className="input-compact" type="password" placeholder="私钥保护密码" value={quickPassphrase} onChange={e => setQuickPassphrase(e.target.value)} />
+                        <label>{t('私钥密码短语 (可选)')}</label>
+                        <input className="input-compact" type="password" placeholder="Passphrase" value={quickPassphrase} onChange={e => setQuickPassphrase(e.target.value)} />
                       </div>
                     </>
                   )}
-                  <button type="submit" className="btn btn-primary btn-block" style={{ marginTop: 12 }}>🚀 立即闪连</button>
+                  <button type="submit" className="btn btn-primary btn-block" style={{ marginTop: 12 }}>{t('立即闪连')}</button>
                  </form>
                </div>
 
@@ -480,21 +483,21 @@ export default function App() {
               <div className="glass-card status-overview-box">
                 <div className="card-header-icon-title">
                   <span className="card-header-icon">📊</span>
-                  <span className="card-header-title">系统状态</span>
-                  <button className={`btn-icon-spin ${isRefreshingPing ? 'spinning' : ''}`} onClick={handleRefreshPing} title="刷新延迟" style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>🔄</button>
+                  <span className="card-header-title">{t('系统状态')}</span>
+                  <button className={`btn-icon-spin ${isRefreshingPing ? 'spinning' : ''}`} onClick={handleRefreshPing} title="Refresh" style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>🔄</button>
                 </div>
                 <div className="stats-grid">
                   <div className="stat-item">
                     <div className="stat-val">{servers.length}</div>
-                    <div className="stat-lbl">服务器总数</div>
+                    <div className="stat-lbl">{t('服务器总数')}</div>
                   </div>
                   <div className="stat-item">
                     <div className="stat-val" style={{ color: 'var(--green)' }}>{Object.values(pings).filter(p => p.online).length}</div>
-                    <div className="stat-lbl">在线节点</div>
+                    <div className="stat-lbl">{t('在线节点')}</div>
                   </div>
                   <div className="stat-item">
                     <div className="stat-val" style={{ color: 'var(--red)' }}>{Object.values(pings).filter(p => !p.online && p.pinged).length}</div>
-                    <div className="stat-lbl">离线节点</div>
+                    <div className="stat-lbl">{t('离线节点')}</div>
                   </div>
                 </div>
               </div>
@@ -503,7 +506,7 @@ export default function App() {
               <div className="glass-card" style={{ padding: '12px 16px' }}>
                 <div className="card-header-icon-title" style={{ marginBottom: 10 }}>
                   <span className="card-header-icon">⚡</span>
-                  <span className="card-header-title">快捷操作</span>
+                  <span className="card-header-title">{t('快捷操作')}</span>
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button
@@ -511,7 +514,7 @@ export default function App() {
                     style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: 13 }}
                     onClick={() => setShowKeys(true)}
                   >
-                    <span style={{ fontSize: 16 }}>🔑</span> 密钥
+                    <span style={{ fontSize: 16 }}>🔑</span> {t('密钥')}
                   </button>
                   <button
                     className="btn btn-secondary"
@@ -527,7 +530,7 @@ export default function App() {
                       }
                     }}
                   >
-                    <span style={{ fontSize: 16 }}>📋</span> 日志
+                    <span style={{ fontSize: 16 }}>📋</span> {t('日志')}
                   </button>
                 </div>
               </div>
@@ -540,14 +543,14 @@ export default function App() {
                 <div className="section-title-container">
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                     <span className="section-title-icon">🖥</span>
-                    <span className="section-title">主机</span>
+                    <span className="section-title">{t('主机')}</span>
                   </div>
                   <button
                     className="btn btn-primary btn-sm"
                     style={{ marginLeft: 'auto', fontSize: 12, padding: '4px 12px' }}
                     onClick={() => { setEditServer(null); setShowAddServer(true); }}
                   >
-                    + 添加
+                    {t('添加')}
                   </button>
                 </div>
 
@@ -576,21 +579,21 @@ export default function App() {
                     className={`content-tab ${contentTab === 'terminal' ? 'active' : ''}`}
                     onClick={() => setContentTab('terminal')}
                   >
-                    🖥 终端
+                    🖥 {t('终端')}
                   </button>
                   <button
                     className={`content-tab ${contentTab === 'files' ? 'active' : ''}`}
                     onClick={() => setContentTab('files')}
                     disabled={activeSession.status !== 'connected'}
                   >
-                    📁 文件管理
+                    📁 {t('文件管理')}
                   </button>
                   <button
                     className={`content-tab ${contentTab === 'history' ? 'active' : ''}`}
                     onClick={() => setContentTab('history')}
                     disabled={activeSession.status !== 'connected'}
                   >
-                    📜 历史指令
+                    📜 {t('历史指令')}
                   </button>
                 </div>
               </div>
@@ -738,6 +741,7 @@ export default function App() {
 
       {/* ── Toasts ────────────────────────────────────────── */}
       <Toast toasts={toasts} />
+      <GlobalDialog />
 
       {/* ── 连接进度卡片 Overlay（参考图一）──────────────── */}
       {connectingServer && (

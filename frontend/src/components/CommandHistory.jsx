@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
+import { useTranslation } from '../i18n.js';
 
 export default function CommandHistory({ sessionId, addToast }) {
+  const { t } = useTranslation();
   const [history, setHistory] = useState([]);
 
   useEffect(() => {
@@ -42,8 +44,8 @@ export default function CommandHistory({ sessionId, addToast }) {
     if (addToast) addToast('已发送指令到终端', 'info', 2000);
   };
 
-  const handleClear = () => {
-    if (window.confirm('确定要清空历史指令吗？')) {
+  const handleClear = async () => {
+    if (await window.aetherDialog?.confirm(`${t('确定要清空历史指令吗？') || '确定要清空历史指令吗？'}`)) {
       setHistory([]);
       try { localStorage.removeItem(`cmd_history_${sessionId}`); } catch (_) {}
     }
@@ -53,11 +55,11 @@ export default function CommandHistory({ sessionId, addToast }) {
     <div style={{ padding: '24px 32px', height: '100%', overflowY: 'auto', background: 'var(--bg-1)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <h3 style={{ margin: 0, fontSize: 16, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>📜</span> 会话输入历史
+          <span>📜</span> {t('会话输入历史')}
         </h3>
         {history.length > 0 && (
           <button className="btn btn-ghost btn-sm" onClick={handleClear} style={{ color: 'var(--text-4)' }}>
-            清空列表
+            {t('清空列表')}
           </button>
         )}
       </div>
@@ -65,9 +67,9 @@ export default function CommandHistory({ sessionId, addToast }) {
       {history.length === 0 ? (
         <div className="empty-state" style={{ marginTop: '10vh' }}>
           <div style={{ fontSize: 48, opacity: 0.3 }}>⌨️</div>
-          <p style={{ marginTop: 16, color: 'var(--text-2)', fontSize: 15, fontWeight: 500 }}>您还没有手工输入任何命令</p>
+          <p style={{ marginTop: 16, color: 'var(--text-2)', fontSize: 15, fontWeight: 500 }}>{t('您还没有手工输入任何命令')}</p>
           <span style={{ fontSize: 13, color: 'var(--text-4)', maxWidth: 300, textAlign: 'center', lineHeight: 1.6, marginTop: 8 }}>
-            在此连接的终端中手工输入并回车执行的指令将自动留存，方便您在此浏览与重复运行。
+            {t('在此连接的终端中手工输入并回车执行的指令将自动留存，方便您在此浏览与重复运行。')}
           </span>
         </div>
       ) : (
@@ -85,10 +87,10 @@ export default function CommandHistory({ sessionId, addToast }) {
               
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 6 }}>
                 <button className="btn btn-ghost btn-sm" onClick={() => handleCopy(item.command)} style={{ fontSize: 12, padding: '4px 12px' }}>
-                  📋 复制
+                  📋 {t('复制')}
                 </button>
                 <button className="btn btn-primary btn-sm" onClick={() => handleExecute(item.command)} style={{ fontSize: 12, padding: '4px 12px', background: 'var(--blue-dim)', color: 'var(--blue)', border: '1px solid rgba(88,166,255,0.2)' }}>
-                  🚀 再次运行
+                  🚀 {t('再次运行')}
                 </button>
               </div>
             </div>

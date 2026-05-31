@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
+import { useTranslation } from '../i18n.js';
 
 const defaultForm = {
   name: '',
@@ -13,6 +14,7 @@ const defaultForm = {
 };
 
 export default function AddServerModal({ server, onSave, onClose }) {
+  const { t } = useTranslation();
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
 
@@ -34,8 +36,8 @@ export default function AddServerModal({ server, onSave, onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.host.trim()) return alert('请填写主机地址');
-    if (!form.username.trim()) return alert('请填写用户名');
+    if (!form.host.trim()) return window.aetherDialog?.alert('请填写主机地址');
+    if (!form.username.trim()) return window.aetherDialog?.alert('请填写用户名');
 
     setSaving(true);
     const data = { ...form };
@@ -56,7 +58,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
       }
     } catch (e) {
       // User cancelled or error
-      if (e) alert(`读取私钥文件失败: ${e}`);
+      if (e) window.aetherDialog?.alert(`读取私钥文件失败: ${e}`, '错误');
     }
   };
 
@@ -66,7 +68,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
         <div className="modal-header">
           <div className="modal-title">
             <span>{server ? '✏️' : '➕'}</span>
-            {server ? '编辑服务器' : '添加服务器'}
+            {server ? t('编辑配置') : t('添加')}
           </div>
           <button className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
         </div>
@@ -75,20 +77,20 @@ export default function AddServerModal({ server, onSave, onClose }) {
           <div className="modal-body">
             {/* 基本信息 */}
             <div className="webdav-section">
-              <div className="webdav-section-title">🖥 基本信息</div>
+              <div className="webdav-section-title">🖥 {t('基本信息') || '基本信息'}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div className="form-group">
-                  <label className="form-label">服务器名称（可选，便于识别）</label>
+                  <label className="form-label">{t('服务器别名（选填）')}</label>
                   <input
                     className="input"
-                    placeholder="例如：生产服务器 / My VPS"
+                    placeholder={t('例如：我的测试服')}
                     value={form.name}
                     onChange={set('name')}
                   />
                 </div>
                 <div className="form-row">
                   <div className="form-group">
-                    <label className="form-label">主机地址 *</label>
+                    <label className="form-label">{t('主机地址 *')}</label>
                     <input
                       className="input"
                       placeholder="192.168.1.1 或 example.com"
@@ -98,7 +100,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
                     />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">端口</label>
+                    <label className="form-label">Port</label>
                     <input
                       className="input"
                       placeholder="22"
@@ -111,7 +113,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
                   </div>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">用户名 *</label>
+                  <label className="form-label">{t('用户名')} *</label>
                   <input
                     className="input"
                     placeholder="root"
@@ -125,25 +127,25 @@ export default function AddServerModal({ server, onSave, onClose }) {
 
             {/* 认证方式 */}
             <div className="webdav-section">
-              <div className="webdav-section-title">🔑 认证方式</div>
+              <div className="webdav-section-title">🔑 {t('认证方式')}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div className="form-group">
-                  <label className="form-label">认证类型</label>
+                  <label className="form-label">{t('认证方式')}</label>
                   <select className="select" value={form.authType} onChange={set('authType')}>
-                    <option value="password">密码认证</option>
-                    <option value="key">私钥认证</option>
+                    <option value="password">{t('密码认证')}</option>
+                    <option value="key">{t('私钥认证')}</option>
                   </select>
                 </div>
 
                 {form.authType === 'password' ? (
                   <div className="form-group">
                     <label className="form-label">
-                      密码 {server ? '（留空则保留原密码）' : '*'}
+                      {t('密码')} {server ? '(Optional if unchanged)' : '*'}
                     </label>
                     <input
                       className="input"
                       type="password"
-                      placeholder={server ? '留空保留原密码' : '输入 SSH 密码'}
+                      placeholder={t('请输入密码')}
                       value={form.password}
                       onChange={set('password')}
                     />
@@ -152,9 +154,9 @@ export default function AddServerModal({ server, onSave, onClose }) {
                   <>
                     <div className="form-group">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                        <label className="form-label" style={{ marginBottom: 0 }}>私钥内容（PEM/OpenSSH 格式）</label>
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={handleSelectPrivateKeyFile} style={{ padding: '2px 8px', fontSize: 11 }}>
-                          📁 选择本地私钥文件
+                        <label className="form-label" style={{ marginBottom: 0 }}>{t('私钥内容')}</label>
+                        <button type="button" className="btn-secondary btn-sm" onClick={handleSelectPrivateKeyFile} style={{ padding: '2px 8px', fontSize: 11 }}>
+                          📁 {t('浏览')}
                         </button>
                       </div>
                       <textarea
@@ -171,11 +173,11 @@ export default function AddServerModal({ server, onSave, onClose }) {
                       />
                     </div>
                     <div className="form-group">
-                      <label className="form-label">私钥密码短语（如有）</label>
+                      <label className="form-label">{t('私钥密码短语 (可选)')}</label>
                       <input
                         className="input"
                         type="password"
-                        placeholder="私钥保护密码（可选）"
+                        placeholder="Passphrase"
                         value={form.passphrase}
                         onChange={set('passphrase')}
                       />
@@ -184,7 +186,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
                 )}
 
                 <div className="alert alert-info" style={{ fontSize: 12 }}>
-                  ℹ️ 所有凭据均以 AES-256 加密保存在本地，不会上传到任何第三方
+                  ℹ️ {t('所有凭据均以 AES-256 加密保存在本地') || '所有凭据均以 AES-256 加密保存在本地'}
                 </div>
               </div>
             </div>
@@ -192,10 +194,10 @@ export default function AddServerModal({ server, onSave, onClose }) {
 
           <div className="modal-footer">
             <button type="button" className="btn btn-secondary" onClick={onClose}>
-              取消
+              {t('取消')}
             </button>
             <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? '保存中...' : server ? '保存修改' : '添加服务器'}
+              {saving ? t('保存中...') : server ? t('保存配置') : t('添加')}
             </button>
           </div>
         </form>

@@ -45,8 +45,8 @@ export default function FileEditor({ file, onSave, onClose }) {
     setModified(false);
   };
 
-  const handleClose = () => {
-    if (modified && !confirm('文件有未保存的修改，确定关闭？')) return;
+  const handleClose = async () => {
+    if (modified && !(await window.aetherDialog?.confirm('文件有未保存的修改，确定关闭？'))) return;
     onClose();
   };
 

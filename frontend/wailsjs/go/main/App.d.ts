@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function BackupToWebdav():Promise<Record<string, any>>;
 
+export function CompressItem(arg1:string,arg2:string):Promise<void>;
+
 export function ConnectSSH(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteConnection(arg1:string):Promise<boolean>;
@@ -43,6 +45,10 @@ export function SaveWebdavConfig(arg1:Record<string, string>):Promise<void>;
 export function SystemInfo(arg1:string):Promise<Record<string, any>>;
 
 export function TestWebdavConnection(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function UncompressItem(arg1:string,arg2:string):Promise<void>;
+
+export function UpdateApp(arg1:string):Promise<void>;
 
 export function UploadFile(arg1:string,arg2:string):Promise<void>;
 

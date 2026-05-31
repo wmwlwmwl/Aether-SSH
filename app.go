@@ -3,8 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -29,6 +34,20 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.sshManager.ctx = ctx // Give SSH manager access to Wails events
+
+	// Clean up old executable from a previous auto-update
+	exePath, err := os.Executable()
+	if err == nil {
+		dir := filepath.Dir(exePath)
+		files, err := os.ReadDir(dir)
+		if err == nil {
+			for _, file := range files {
+				if !file.IsDir() && strings.HasSuffix(file.Name(), ".old") {
+					os.Remove(filepath.Join(dir, file.Name()))
+				}
+			}
+		}
+	}
 }
 
 // GetConnections returns all saved SSH connections
@@ -105,6 +124,16 @@ func (a *App) RenameItem(sessionId string, oldPath string, newPath string) error
 	return a.sshManager.RenameItem(sessionId, oldPath, newPath)
 }
 
+// CompressItem archives a file or directory on the remote server
+func (a *App) CompressItem(sessionId string, remotePath string) error {
+	return a.sshManager.CompressItem(sessionId, remotePath)
+}
+
+// UncompressItem extracts an archive on the remote server
+func (a *App) UncompressItem(sessionId string, remotePath string) error {
+	return a.sshManager.UncompressItem(sessionId, remotePath)
+}
+
 // TODO: File upload/download using standard file dialogs in Wails
 func (a *App) UploadFile(sessionId string, remotePath string) error {
 	filepaths, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
@@ -171,4 +200,92 @@ func (a *App) RestoreFromWebdavFile(filename string) (map[string]interface{}, er
 // PingServer pings a server
 func (a *App) PingServer(host string, port int) map[string]interface{} {
 	return PingServer(host, port)
+}
+
+// downloadProgressReader wraps an io.Reader to track download progress and emit Wails events
+type downloadProgressReader struct {
+	io.Reader
+	ctx         context.Context
+	total       int64
+	downloaded  int64
+	lastEmit    time.Time
+}
+
+func (pr *downloadProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.Reader.Read(p)
+	pr.downloaded += int64(n)
+
+	if pr.total > 0 {
+		now := time.Now()
+		if now.Sub(pr.lastEmit) >= 200*time.Millisecond || pr.downloaded == pr.total {
+			progress := int(float64(pr.downloaded) / float64(pr.total) * 100)
+			runtime.EventsEmit(pr.ctx, "app-update-progress", progress)
+			pr.lastEmit = now
+		}
+	}
+	return n, err
+}
+
+// UpdateApp downloads the new exe from the given url, replaces the current running exe, and restarts the app.
+func (a *App) UpdateApp(downloadUrl string) error {
+	// 1. 发起请求下载新文件
+	resp, err := http.Get(downloadUrl)
+	if err != nil {
+		return fmt.Errorf("failed to download update: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: %s", resp.Status)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not determine executable path: %w", err)
+	}
+
+	updatePath := exePath + ".update"
+	oldPath := exePath + ".old"
+
+	out, err := os.Create(updatePath)
+	if err != nil {
+		return fmt.Errorf("could not create temporary update file: %w", err)
+	}
+
+	progressReader := &downloadProgressReader{
+		Reader: resp.Body,
+		ctx:    a.ctx,
+		total:  resp.ContentLength,
+	}
+
+	// 2. 写入到带有进度的缓冲并存入 .update 临时文件
+	_, err = io.Copy(out, progressReader)
+	out.Close() // Ensure the file is completely flushed and closed
+	if err != nil {
+		os.Remove(updatePath) // Cleanup on failure
+		return fmt.Errorf("failed to save update file: %w", err)
+	}
+
+	// 3. 将当前运行的可执行文件重命名为 .old（Windows 允许重命名被占用的文件，但不能覆盖或删除）
+	if err := os.Rename(exePath, oldPath); err != nil {
+		os.Remove(updatePath)
+		return fmt.Errorf("failed to rename current executable: %w", err)
+	}
+
+	// 4. 将刚才下载的文件重命名为正常的 exe 名字
+	if err := os.Rename(updatePath, exePath); err != nil {
+		// 回滚
+		os.Rename(oldPath, exePath)
+		return fmt.Errorf("failed to apply update file: %w", err)
+	}
+
+	// 5. 启动新的可执行文件，并独立运行
+	cmd := exec.Command(exePath)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to restart application: %w", err)
+	}
+
+	// 6. 成功启动后，主动退出当前旧进程，让位给新进程
+	os.Exit(0)
+	return nil
 }
