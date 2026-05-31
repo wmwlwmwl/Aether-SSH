@@ -1,0 +1,19 @@
+{
+  "name": "Aether",
+  "outputfilename": "Aether",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Aether",
+    "email": "hello@aether.com"
+  },
+  "info": {
+    "companyName": "Aether",
+    "productName": "Aether",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2024",
+    "comments": "Lightweight SSH Client"
+  }
+}
