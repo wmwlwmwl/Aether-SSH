@@ -48,7 +48,7 @@ export function TestWebdavConnection(arg1:string,arg2:string,arg3:string):Promis
 
 export function UncompressItem(arg1:string,arg2:string):Promise<void>;
 
-export function UpdateApp(arg1:string):Promise<void>;
+export function UpdateApp(arg1:string,arg2:string):Promise<void>;
 
 export function UploadFile(arg1:string,arg2:string):Promise<void>;
 

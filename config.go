@@ -134,13 +134,17 @@ func (c *ConfigManager) encrypt(text string) string {
 }
 
 func (c *ConfigManager) decrypt(hexText string) string {
+	return c.decryptWithKey(hexText, c.key)
+}
+
+func (c *ConfigManager) decryptWithKey(hexText string, key []byte) string {
 	if hexText == "" {
 		return ""
 	}
 	var ciphertext []byte
 	fmt.Sscanf(hexText, "%x", &ciphertext)
 
-	block, err := aes.NewCipher(c.key)
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return ""
 	}
@@ -348,10 +352,21 @@ func (c *ConfigManager) RestoreFromWebdavFile(filename string) (map[string]inter
 	}
 
 	decrypted := c.decrypt(string(data))
+	
+	// 如果本机新的随机密钥解密失败，尝试回退到旧版的默认统一跨设备密钥
+	if decrypted == "" {
+		legacyKey := []byte("aether-ssh-secret-key-0123456789")
+		decrypted = c.decryptWithKey(string(data), legacyKey)
+	}
+
+	if decrypted == "" {
+		return nil, fmt.Errorf("解密失败：备份文件可能已损坏，或者来自于不兼容的跨设备加密记录")
+	}
+
 	var conns []Connection
 	err = json.Unmarshal([]byte(decrypted), &conns)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("解析备份文件出错：%v", err)
 	}
 
 	c.saveConnectionsFile(conns)

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -227,7 +228,7 @@ func (pr *downloadProgressReader) Read(p []byte) (int, error) {
 }
 
 // UpdateApp downloads the new exe from the given url, replaces the current running exe, and restarts the app.
-func (a *App) UpdateApp(downloadUrl string) error {
+func (a *App) UpdateApp(downloadUrl string, filename string) error {
 	// 1. 发起请求下载新文件
 	resp, err := http.Get(downloadUrl)
 	if err != nil {
@@ -239,15 +240,22 @@ func (a *App) UpdateApp(downloadUrl string) error {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("could not determine executable path: %w", err)
+	isSetup := strings.Contains(strings.ToLower(filename), "installer") || strings.Contains(strings.ToLower(filename), "setup")
+	var targetPath string
+	var exePath string
+
+	if isSetup {
+		targetPath = filepath.Join(os.TempDir(), filename)
+	} else {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("could not determine executable path: %w", err)
+		}
+		exePath = exe
+		targetPath = exePath + ".update"
 	}
 
-	updatePath := exePath + ".update"
-	oldPath := exePath + ".old"
-
-	out, err := os.Create(updatePath)
+	out, err := os.Create(targetPath)
 	if err != nil {
 		return fmt.Errorf("could not create temporary update file: %w", err)
 	}
@@ -262,30 +270,41 @@ func (a *App) UpdateApp(downloadUrl string) error {
 	_, err = io.Copy(out, progressReader)
 	out.Close() // Ensure the file is completely flushed and closed
 	if err != nil {
-		os.Remove(updatePath) // Cleanup on failure
+		os.Remove(targetPath) // Cleanup on failure
 		return fmt.Errorf("failed to save update file: %w", err)
 	}
 
-	// 3. 将当前运行的可执行文件重命名为 .old（Windows 允许重命名被占用的文件，但不能覆盖或删除）
+	// 3. 区分 Setup 还是 Portable 替换
+	if isSetup {
+		// 启动 Setup 安装向导，隐藏黑框
+		cmd := exec.Command("cmd.exe", "/C", "start", "", targetPath)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start setup: %w", err)
+		}
+		// 退出当前应用以解除目录锁定
+		os.Exit(0)
+		return nil
+	}
+
+	// Portable 热更替换逻辑
+	oldPath := exePath + ".old"
 	if err := os.Rename(exePath, oldPath); err != nil {
-		os.Remove(updatePath)
+		os.Remove(targetPath)
 		return fmt.Errorf("failed to rename current executable: %w", err)
 	}
 
-	// 4. 将刚才下载的文件重命名为正常的 exe 名字
-	if err := os.Rename(updatePath, exePath); err != nil {
-		// 回滚
+	if err := os.Rename(targetPath, exePath); err != nil {
 		os.Rename(oldPath, exePath)
 		return fmt.Errorf("failed to apply update file: %w", err)
 	}
 
-	// 5. 启动新的可执行文件，并独立运行
 	cmd := exec.Command(exePath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to restart application: %w", err)
 	}
 
-	// 6. 成功启动后，主动退出当前旧进程，让位给新进程
 	os.Exit(0)
 	return nil
 }

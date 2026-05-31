@@ -31,7 +31,7 @@ const I18N = {
       refreshDesc: '设置探针数据和延迟测试的自动刷新间隔。越高的频率越实时，但资源占用越大。',
       probeRefresh: '探针刷新间隔',
       pingRefresh: '延迟检测间隔',
-      fixed30s: '30 秒（固定）',
+      fixed30s: '2 秒（固定）',
     },
     appearance: {
       langTitle: '语言',
@@ -77,7 +77,7 @@ const I18N = {
       refreshDesc: 'Set auto-refresh intervals for probe data and latency testing. Higher means more real-time, but uses more resources.',
       probeRefresh: 'Probe Refresh Interval',
       pingRefresh: 'Ping Interval',
-      fixed30s: '30 seconds (fixed)',
+      fixed30s: '2 seconds (fixed)',
     },
     appearance: {
       langTitle: 'Language',
@@ -114,7 +114,7 @@ const defaultWebdavForm = {
 };
 
 export default function SettingsModal({ onClose, addToast, onRestored }) {
-  const CURRENT_VERSION = '1.0.1';
+  const CURRENT_VERSION = '1.0.2';
   const [updateInfo, setUpdateInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(-1);
@@ -136,23 +136,40 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
       if (!res.ok) throw new Error('API request failed');
       const data = await res.json();
       if (data && data.tag_name) {
-        let latest = data.tag_name;
-        if (latest.startsWith('v')) {
-           latest = latest.substring(1);
-        }
+        // Clean the v prefix thoroughly using regex
+        let latest = data.tag_name.replace(/^v+/i, '');
         
         // Find exe asset
         let downloadAssetUrl = '';
+        let downloadFilename = '';
         if (data.assets && data.assets.length > 0) {
            const exeAsset = data.assets.find(a => a.name.endsWith('.exe'));
-           if (exeAsset) downloadAssetUrl = exeAsset.browser_download_url;
+           if (exeAsset) {
+               downloadAssetUrl = exeAsset.browser_download_url;
+               downloadFilename = exeAsset.name;
+           }
         }
 
-        if (latest !== CURRENT_VERSION && latest > CURRENT_VERSION) {
+        // Semantic versioning comparison (e.g. 1.0.2 > 1.0.10 should be false)
+        const isNewer = (latestVer, currentVer) => {
+          if (latestVer === currentVer) return false;
+          const lParts = latestVer.split('.').map(Number);
+          const cParts = currentVer.split('.').map(Number);
+          for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+            const l = lParts[i] || 0;
+            const c = cParts[i] || 0;
+            if (l > c) return true;
+            if (l < c) return false;
+          }
+          return false;
+        };
+
+        if (isNewer(latest, CURRENT_VERSION)) {
           setUpdateInfo({
             hasUpdate: true,
             latestVersion: 'v' + latest,
-            url: downloadAssetUrl || data.html_url
+            url: downloadAssetUrl || data.html_url,
+            filename: downloadFilename
           });
           addToast(language === 'zh-CN' ? '发现新版本: v' + latest : 'New version found: v' + latest, 'success');
         } else {
@@ -178,7 +195,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
 
     setDownloadProgress(0);
     try {
-      await AppGo.UpdateApp(updateInfo.url);
+      await AppGo.UpdateApp(updateInfo.url, updateInfo.filename || 'update.exe');
       // Backend automatically exits process on success
     } catch (err) {
       addToast((language === 'zh-CN' ? '更新失败: ' : 'Update failed: ') + err, 'error');
@@ -206,6 +223,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   // Network/Ping state
   const [pingProtocol, setPingProtocol] = useState(localStorage.getItem('pingProtocol') || 'ssh');
   const [probeInterval, setProbeInterval] = useState(parseInt(localStorage.getItem('probeInterval') || '5', 10));
+  const [pingInterval, setPingInterval] = useState(parseInt(localStorage.getItem('pingInterval') || '2', 10));
 
   // Appearance state
   const [themeMode, setThemeMode] = useState(localStorage.getItem('themeMode') || 'dark');
@@ -469,9 +487,13 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                       fontSize: 32, 
                       fontWeight: 800, 
                       color: 'var(--text-1)',
-                      letterSpacing: '-0.5px'
+                      letterSpacing: '-0.5px',
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      gap: 8
                     }}>
                       Aether
+                      <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-4)', letterSpacing: '0' }}>by Angus</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       <span style={{ fontSize: 14, color: 'var(--text-3)', fontFamily: 'var(--font-mono)' }}>
@@ -680,7 +702,25 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{t.network.pingRefresh}</span>
-                      <span style={{ fontSize: 12, color: 'var(--text-4)' }}>{t.network.fixed30s}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {[2, 5, 10, 30].map(s => (
+                          <button
+                            key={s}
+                            onClick={() => {
+                              setPingInterval(s);
+                              localStorage.setItem('pingInterval', String(s));
+                              window.dispatchEvent(new Event('pingIntervalChanged'));
+                            }}
+                            style={{
+                              padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid',
+                              borderColor: pingInterval === s ? '#22c55e' : 'var(--border)',
+                              background: pingInterval === s ? 'rgba(34,197,94,0.1)' : 'var(--bg-3)',
+                              color: pingInterval === s ? '#22c55e' : 'var(--text-3)',
+                              transition: 'all 0.15s',
+                            }}
+                          >{s}s</button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -955,6 +995,12 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                   <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-1)', marginBottom: 8 }}>云端同步</div>
                   <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 20 }}>同步所有配置，全程 AES-256 高强加密</div>
                   
+                  {isConfigured && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 8, marginBottom: 20, color: 'var(--green)', fontSize: 13 }}>
+                      <span>✨</span> <span><strong>已开启自动云端备份：</strong>当您添加、编辑、删除服务器或修改配置时，后台将静默保存至云端。</span>
+                    </div>
+                  )}
+
                   {lastBackup && <div style={{ fontSize: 12, color: 'var(--green)', marginBottom: 12 }}>上次同步: {lastBackup}</div>}
                   
                   <div style={{ display: 'flex', gap: 12 }}>

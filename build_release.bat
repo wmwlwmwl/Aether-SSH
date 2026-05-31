@@ -15,30 +15,37 @@ if "%VERSION%"=="" (
     exit /b 1
 )
 
-echo [1/3] Configuring Go environment...
-set "PATH=C:\Users\Angus\Desktop\Antigravity\SSH\Source_Codes\Aether-Source\go\bin;%PATH%"
+echo [1/3] Configuring Go and NSIS environment...
+set "PATH=C:\Users\Angus\Desktop\Antigravity\SSH\Source_Codes\Aether-Source\go\bin;C:\Users\Angus\Desktop\Antigravity\SSH\Packaging_Tools\nsis\nsis-3.08;%PATH%"
 
-echo [2/3] Building executable using Wails...
+echo [2/3] Building setup installer using Wails...
 cd /d "%~dp0"
-call wails build -clean -upx
+call wails build -clean -upx -nsis
 
-if not exist "build\bin\Aether.exe" (
-    echo [ERROR] Build failed, Aether.exe not found.
+set "EXE_PATH="
+for %%f in (build\bin\*installer.exe) do (
+    set "EXE_PATH=%%f"
+    goto :found_exe
+)
+
+:found_exe
+if "%EXE_PATH%"=="" (
+    echo [ERROR] Build failed, setup installer not found.
     if "%~1"=="" pause
     exit /b 1
 )
 
-echo [3/3] Archiving executable...
+echo [3/3] Archiving setup installer...
 set "OUTPUT_DIR=C:\Users\Angus\Desktop\Antigravity\SSH\exe"
 if not exist "%OUTPUT_DIR%" (
     mkdir "%OUTPUT_DIR%"
 )
 
-copy /y "build\bin\Aether.exe" "%OUTPUT_DIR%\Aether_%VERSION%.exe" >nul
+copy /y "%EXE_PATH%" "%OUTPUT_DIR%\Aether_Setup_%VERSION%.exe" >nul
 
 echo.
 echo ==============================================
 echo   SUCCESS! 
-echo   File saved to: %OUTPUT_DIR%\Aether_%VERSION%.exe
+echo   File saved to: %OUTPUT_DIR%\Aether_Setup_%VERSION%.exe
 echo ==============================================
 if "%~1"=="" pause

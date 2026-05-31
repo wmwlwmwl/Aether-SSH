@@ -3,43 +3,44 @@ param (
 )
 
 Write-Host "==============================================" -ForegroundColor Cyan
-Write-Host "       Aether SSH 自动化发版封装工具" -ForegroundColor Cyan
+Write-Host "       Aether SSH Automated Setup Builder" -ForegroundColor Cyan
 Write-Host "==============================================" -ForegroundColor Cyan
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = Read-Host "请输入将要封装的版本号 (例如 V1.0.1)"
+    $Version = Read-Host "Enter release version (e.g. V1.0.1)"
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    Write-Host "[错误] 版本号不能为空！" -ForegroundColor Red
+    Write-Host "[ERROR] Version cannot be empty!" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "[1/3] 正在配置 Go 环境变量..." -ForegroundColor Yellow
-$env:PATH = "C:\Users\Angus\Desktop\Antigravity\SSH\Source_Codes\Aether-Source\go\bin;" + $env:PATH
+Write-Host "[1/3] Configuring Go and NSIS environment..." -ForegroundColor Yellow
+$env:PATH = "C:\Users\Angus\Desktop\Antigravity\SSH\Source_Codes\Aether-Source\go\bin;C:\Users\Angus\Desktop\Antigravity\SSH\Packaging_Tools\nsis\nsis-3.08;" + $env:PATH
 
-Write-Host "[2/3] 正在使用 Wails 进行产品级打包编译..." -ForegroundColor Yellow
+Write-Host "[2/3] Building setup installer using Wails..." -ForegroundColor Yellow
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location -Path $scriptPath
-wails build -clean -upx
+wails build -clean -upx -nsis
 
-$exePath = Join-Path -Path $scriptPath -ChildPath "build\bin\Aether.exe"
-if (-Not (Test-Path -Path $exePath)) {
-    Write-Host "[错误] 打包失败，未找到 Aether.exe 输出。" -ForegroundColor Red
+$exePath = Get-ChildItem -Path (Join-Path -Path $scriptPath -ChildPath "build\bin") -Filter "*installer.exe" | Select-Object -First 1 | Select-Object -ExpandProperty FullName
+
+if ([string]::IsNullOrEmpty($exePath) -or -Not (Test-Path -Path $exePath)) {
+    Write-Host "[ERROR] Build failed, setup installer not found." -ForegroundColor Red
     exit 1
 }
 
-Write-Host "[3/3] 正在移动打包文件到发布归档库..." -ForegroundColor Yellow
+Write-Host "[3/3] Archiving setup installer..." -ForegroundColor Yellow
 $outputDir = "C:\Users\Angus\Desktop\Antigravity\SSH\exe"
 if (-Not (Test-Path -Path $outputDir)) {
     New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 }
 
-$destPath = Join-Path -Path $outputDir -ChildPath "Aether_$Version.exe"
+$destPath = Join-Path -Path $outputDir -ChildPath "Aether_Setup_$Version.exe"
 Copy-Item -Path $exePath -Destination $destPath -Force
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
-Write-Host "  ✅ 封装成功!" -ForegroundColor Green
-Write-Host "  文件已保存至: $destPath" -ForegroundColor Green
+Write-Host "  SUCCESS!" -ForegroundColor Green
+Write-Host "  File saved to: $destPath" -ForegroundColor Green
 Write-Host "==============================================" -ForegroundColor Green

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌌 AetherSSH
+# 🐸 AetherSSH
 
 **一款兼具现代极简视觉与极致交互体验的跨平台 SSH 客户端**
 

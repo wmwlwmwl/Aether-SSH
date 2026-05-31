@@ -75,7 +75,8 @@ ManifestDPIAware true
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
+InstallDir "$PROGRAMFILES64\${INFO_PRODUCTNAME}" # Single folder instead of double
+InstallDirRegKey HKCU "Software\${INFO_PRODUCTNAME}" "InstallDir" # Remember last install dir
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
@@ -102,6 +103,9 @@ Section
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+    
+    ; Save install directory for next upgrade
+    WriteRegStr HKCU "Software\${INFO_PRODUCTNAME}" "InstallDir" $INSTDIR
 SectionEnd
 
 Section "uninstall"
@@ -119,4 +123,7 @@ Section "uninstall"
     !insertmacro wails.unassociateCustomProtocols
 
     !insertmacro wails.deleteUninstaller
+    
+    ; Clear install directory memory on uninstall
+    DeleteRegKey HKCU "Software\${INFO_PRODUCTNAME}"
 SectionEnd

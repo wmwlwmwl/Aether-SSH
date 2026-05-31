@@ -94,8 +94,8 @@ export function UncompressItem(arg1, arg2) {
   return window['go']['main']['App']['UncompressItem'](arg1, arg2);
 }
 
-export function UpdateApp(arg1) {
-  return window['go']['main']['App']['UpdateApp'](arg1);
+export function UpdateApp(arg1, arg2) {
+  return window['go']['main']['App']['UpdateApp'](arg1, arg2);
 }
 
 export function UploadFile(arg1, arg2) {

@@ -36,6 +36,15 @@ export default function App() {
   // ── 新增主页仪表盘状态 ──────────────────────────────────
   const [recentServers, setRecentServers] = useState([]);
   const [isRefreshingPing, setIsRefreshingPing] = useState(false);
+  const [pingInterval, setPingInterval] = useState(parseInt(localStorage.getItem('pingInterval') || '2', 10));
+
+  useEffect(() => {
+    const handler = () => {
+      setPingInterval(parseInt(localStorage.getItem('pingInterval') || '2', 10));
+    };
+    window.addEventListener('pingIntervalChanged', handler);
+    return () => window.removeEventListener('pingIntervalChanged', handler);
+  }, []);
 
   // 闪电直连的表单状态
   const [quickName, setQuickName] = useState('');
@@ -128,6 +137,7 @@ export default function App() {
     try {
       const savedServer = await AppGo.SaveConnection(tempServer);
       await loadServers();
+      triggerAutoBackup();
 
       await AppGo.ConnectSSH(sessionId, savedServer.id);
       setSessions((prev) =>
@@ -206,10 +216,22 @@ export default function App() {
 
   useEffect(() => {
     pingAll();
-    // 修改为 30 秒刷新一次全局延迟，降低后台消耗
-    pingTimerRef.current = setInterval(pingAll, 30000);
+    // 修改为动态刷新延迟，降低后台消耗或提高实时性
+    pingTimerRef.current = setInterval(pingAll, pingInterval * 1000);
     return () => clearInterval(pingTimerRef.current);
-  }, [pingAll]);
+  }, [pingAll, pingInterval]);
+
+  // ── 自动云端备份 ──────────────────────────────────────────
+  const triggerAutoBackup = useCallback(async () => {
+    try {
+      const cfg = await AppGo.GetWebdavConfig();
+      if (cfg && cfg.username) {
+        await AppGo.BackupToWebdav();
+      }
+    } catch (e) {
+      // 忽略失败，防止打扰用户
+    }
+  }, []);
 
   // ── Connect to server ──────────────────────────────────────
   const connectServer = useCallback(async (server) => {
@@ -335,22 +357,24 @@ export default function App() {
       await AppGo.SaveConnection(data);
       await loadServers();
       addToast(data.id ? '服务器配置已更新' : '服务器添加成功', 'success');
+      triggerAutoBackup();
     } catch (err) {
       addToast(err, 'error');
     }
     setShowAddServer(false);
     setEditServer(null);
-  }, [loadServers, addToast]);
+  }, [loadServers, addToast, triggerAutoBackup]);
 
   const handleDeleteServer = useCallback(async (id) => {
     try {
       await AppGo.DeleteConnection(id);
       setServers((prev) => prev.filter((s) => s.id !== id));
       addToast('服务器已删除', 'success');
+      triggerAutoBackup();
     } catch {
       addToast('删除失败', 'error');
     }
-  }, [addToast]);
+  }, [addToast, triggerAutoBackup]);
 
   const filteredServers = servers.filter(s => 
     (s.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 

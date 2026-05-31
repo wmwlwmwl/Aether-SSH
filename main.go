@@ -4,6 +4,8 @@ import (
 	"context"
 	"embed"
 	"os"
+	"syscall"
+	"unsafe"
 
 	"github.com/energye/systray"
 	"github.com/wailsapp/wails/v2"
@@ -20,6 +22,16 @@ var assets embed.FS
 var icon []byte
 
 func main() {
+	// 创建全局互斥锁，确保程序只能运行一个实例 (单例模式)
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	procCreateMutex := kernel32.NewProc("CreateMutexW")
+	mutexName, _ := syscall.UTF16PtrFromString("AetherSSH_Global_Single_Instance_Mutex")
+	_, _, errMutex := procCreateMutex.Call(0, 1, uintptr(unsafe.Pointer(mutexName)))
+	if errMutex == syscall.ERROR_ALREADY_EXISTS {
+		// 如果发现已经有一个实例在运行，则当前启动的实例静默退出
+		os.Exit(0)
+	}
+
 	// Create an instance of the app structure
 	app := NewApp()
 
