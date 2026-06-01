@@ -38,23 +38,12 @@ func NewConfigManager() *ConfigManager {
 	appData, _ := os.UserConfigDir()
 	dir := filepath.Join(appData, "Aether", "config")
 
-	// ── 自动数据迁移逻辑（AetherSSH -> Aether） ──
-	oldDir := filepath.Join(appData, "AetherSSH")
-	newDir := filepath.Join(appData, "Aether")
-	if _, err := os.Stat(newDir); os.IsNotExist(err) {
-		if _, errOld := os.Stat(oldDir); errOld == nil {
-			// 如果新路径不存在但旧路径存在，自动执行文件夹重命名无损迁移
-			os.Rename(oldDir, newDir)
-		}
-	}
-
 	os.MkdirAll(dir, 0755)
 
 	keyFile := filepath.Join(dir, "aether.key")
 	var key []byte
 	var keyErr error
 
-	legacyKey := []byte("aether-ssh-secret-key-0123456789")
 	connFile := filepath.Join(dir, "connections.json")
 	davFile := filepath.Join(dir, "webdav.json")
 
@@ -72,45 +61,8 @@ func NewConfigManager() *ConfigManager {
 		// 密钥文件不存在，生成全新密钥
 		newKey := make([]byte, 32)
 		rand.Read(newKey)
-
-		// 检查是否存在已有的配置文件，若有则进行无缝安全迁移
-		_, errConn := os.Stat(connFile)
-		_, errDav := os.Stat(davFile)
-		isUpgrade := errConn == nil || errDav == nil
-
-		if isUpgrade {
-			// 是升级用户，原配置文件使用的是硬编码 legacyKey
-			legacyMgr := &ConfigManager{
-				configDir: dir,
-				connFile:  connFile,
-				davFile:   davFile,
-				key:       legacyKey,
-			}
-
-			// 1. 读取并解密旧数据
-			conns := legacyMgr.GetConnections()
-			davConfig := legacyMgr.GetWebdavConfig()
-
-			// 2. 写入全新专属随机密钥文件
-			os.WriteFile(keyFile, newKey, 0600)
-			key = newKey
-
-			// 3. 用新密钥重新保存配置文件
-			newMgr := &ConfigManager{
-				configDir: dir,
-				connFile:  connFile,
-				davFile:   davFile,
-				key:       newKey,
-			}
-			newMgr.saveConnectionsFile(conns)
-			if davConfig != nil {
-				newMgr.SaveWebdavConfig(davConfig)
-			}
-		} else {
-			// 全新安装用户，直接保存随机密钥
-			os.WriteFile(keyFile, newKey, 0600)
-			key = newKey
-		}
+		os.WriteFile(keyFile, newKey, 0600)
+		key = newKey
 	}
 
 	return &ConfigManager{
@@ -352,15 +304,9 @@ func (c *ConfigManager) RestoreFromWebdavFile(filename string) (map[string]inter
 	}
 
 	decrypted := c.decrypt(string(data))
-	
-	// 如果本机新的随机密钥解密失败，尝试回退到旧版的默认统一跨设备密钥
-	if decrypted == "" {
-		legacyKey := []byte("aether-ssh-secret-key-0123456789")
-		decrypted = c.decryptWithKey(string(data), legacyKey)
-	}
 
 	if decrypted == "" {
-		return nil, fmt.Errorf("解密失败：备份文件可能已损坏，或者来自于不兼容的跨设备加密记录")
+		return nil, fmt.Errorf("解密失败：备份文件可能已损坏，或者密钥不匹配")
 	}
 
 	var conns []Connection
