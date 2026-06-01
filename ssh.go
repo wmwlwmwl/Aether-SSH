@@ -47,6 +47,13 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 	var authMethods []ssh.AuthMethod
 	if conn.AuthMethod == "password" {
 		authMethods = append(authMethods, ssh.Password(conn.Password))
+		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+			answers = make([]string, len(questions))
+			for i := range answers {
+				answers[i] = conn.Password
+			}
+			return answers, nil
+		}))
 	} else if conn.AuthMethod == "privateKey" {
 		var signer ssh.Signer
 		var err error
@@ -76,32 +83,9 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 			"ssh-rsa",
 			"ssh-dss",
 		},
-		Config: ssh.Config{
-			KeyExchanges: []string{
-				"curve25519-sha256",
-				"curve25519-sha256@libssh.org",
-				"ecdh-sha2-nistp256",
-				"ecdh-sha2-nistp384",
-				"ecdh-sha2-nistp521",
-				"diffie-hellman-group14-sha256",
-				"diffie-hellman-group14-sha1",
-				"diffie-hellman-group1-sha1",
-			},
-			Ciphers: []string{
-				"aes128-gcm@openssh.com",
-				"chacha20-poly1305@openssh.com",
-				"aes128-ctr",
-				"aes192-ctr",
-				"aes256-ctr",
-				"aes128-cbc",
-				"aes192-cbc",
-				"aes256-cbc",
-				"3des-cbc",
-			},
-		},
 	}
 
-	target := fmt.Sprintf("%s:%d", conn.Host, conn.Port)
+	target := fmt.Sprintf("%s:%d", strings.TrimSpace(conn.Host), conn.Port)
 	client, err := ssh.Dial("tcp", target, config)
 	if err != nil {
 		return err

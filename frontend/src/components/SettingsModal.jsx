@@ -114,7 +114,7 @@ const defaultWebdavForm = {
 };
 
 export default function SettingsModal({ onClose, addToast, onRestored }) {
-  const CURRENT_VERSION = '1.0.3';
+  const CURRENT_VERSION = '1.0.4';
   const [updateInfo, setUpdateInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(-1);
