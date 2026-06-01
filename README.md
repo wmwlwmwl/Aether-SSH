@@ -77,3 +77,9 @@ AetherSSH 是自己业余时间搓出来的一款 SSH 终端工具。
 
 [MIT License](LICENSE) 
 开源就是图个乐，随便用，随便改。大家开心就好。
+
+---
+
+## 🤝 友情链接
+
+- [LINUX DO](https://linux.do/) - 新一代的 Linux 开源技术交流社区

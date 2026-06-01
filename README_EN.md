@@ -76,3 +76,9 @@ Whether it's local SSH passwords or WebDAV credentials, everything is encrypted 
 
 [MIT License](LICENSE) 
 Open source is all about having fun. Use it, modify it, enjoy it!
+
+---
+
+## 🤝 Friends & Links
+
+- [LINUX DO](https://linux.do/) - The next-generation Linux open source technology community
