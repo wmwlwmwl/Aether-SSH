@@ -2,12 +2,20 @@
 
 # 🐸 AetherSSH
 
-**一个轻量、好看、好用的 SSH 客户端**
+🔥 **一个轻量、好看、好用的 SSH 客户端** 🚀
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
-[![Wails](https://img.shields.io/badge/Built%20with-Wails-47CCD6.svg?style=for-the-badge&logo=go)](https://wails.io)
-[![React](https://img.shields.io/badge/Frontend-React-61DAFB.svg?style=for-the-badge&logo=react)](https://react.dev)
-[![Platform](https://img.shields.io/badge/Platform-Windows-0078D6.svg?style=for-the-badge&logo=windows)](https://microsoft.com)
+日常开发与服务器管理必备，基于 Go (Wails) 与 React 构建。  
+主打低资源占用、高颜值微交互体验与便捷的 WebDAV 云端同步。
+
+[![Release](https://img.shields.io/github/v/release/dag6608/Aether-SSH?style=flat-square&color=0078D6&label=RELEASE)](https://github.com/dag6608/Aether-SSH/releases)
+[![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6.svg?style=flat-square)](https://github.com/dag6608/Aether-SSH/releases)
+[![License](https://img.shields.io/badge/LICENSE-MIT-8CBA00.svg?style=flat-square)](LICENSE)
+
+[![Download](https://img.shields.io/github/downloads/dag6608/Aether-SSH/total?style=for-the-badge&color=2EA043&label=DOWNLOAD%20LATEST)](https://github.com/dag6608/Aether-SSH/releases)
+
+[English](./README_EN.md) · [简体中文](./README.md)
+
+</div>
 
 ---
 
@@ -15,8 +23,6 @@ AetherSSH 是自己业余时间搓出来的一款 SSH 终端工具。
 平时自己经常需要连接服务器，为了兼顾极低的资源占用和个人的审美偏好，
 所以我用 Wails (Go + React) 写了这玩意儿，主打一个体积小、颜值高、启动快。
 （UI 灵感部分参考了 Netcatty 和 xterminal，感谢！）
-
-</div>
 
 ---
 
@@ -47,7 +53,7 @@ AetherSSH 是自己业余时间搓出来的一款 SSH 终端工具。
    ```
 3. 克隆项目并本地启动热重载：
    ```bash
-   git clone https://github.com/yourusername/Aether.git
+   git clone https://github.com/dag6608/Aether-SSH.git
    cd Aether
    wails dev
    ```
@@ -64,7 +70,6 @@ AetherSSH 是自己业余时间搓出来的一款 SSH 终端工具。
 密码安全这块大家大可放心。
 现在的版本没有写死任何密钥，软件第一次跑的时候，会在本地随机生成一个你专属的 32 位密钥文件（权限只有你自己能读写）。
 不管你是保存在本地的 SSH 密码，还是 WebDAV 密码，统统都会用 AES-GCM 算法加密一遍才会落地保存。
-
 
 ---
 
