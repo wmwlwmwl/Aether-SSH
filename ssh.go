@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +18,7 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type SessionData struct {
@@ -68,10 +71,44 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
 	}
 
+	knownHostsPath := filepath.Join(os.Getenv("USERPROFILE"), ".ssh", "known_hosts")
+	os.MkdirAll(filepath.Dir(knownHostsPath), 0700)
+	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
+		os.WriteFile(knownHostsPath, []byte(""), 0600)
+	}
+
+	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		hostKeyCallback = ssh.InsecureIgnoreHostKey()
+	}
+
+	customHostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		err := hostKeyCallback(hostname, remote, key)
+		if err == nil {
+			return nil
+		}
+		
+		var keyErr *knownhosts.KeyError
+		if errors.As(err, &keyErr) {
+			if len(keyErr.Want) == 0 {
+				f, fErr := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_WRONLY, 0600)
+				if fErr == nil {
+					defer f.Close()
+					line := knownhosts.Line([]string{hostname}, key)
+					f.WriteString(line + "\n")
+				}
+				return nil
+			} else {
+				return fmt.Errorf("WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! POSSIBLE MITM ATTACK")
+			}
+		}
+		return err
+	}
+
 	config := &ssh.ClientConfig{
 		User:            conn.Username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: customHostKeyCallback,
 		Timeout:         10 * time.Second,
 		HostKeyAlgorithms: []string{
 			"ssh-ed25519",
