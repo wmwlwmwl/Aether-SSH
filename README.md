@@ -2,7 +2,7 @@
 
 # 🐸 AetherSSH
 
-**一个轻量、好看、好用的跨平台 SSH 客户端**
+**一个轻量、好看、好用的 SSH 客户端**
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 [![Wails](https://img.shields.io/badge/Built%20with-Wails-47CCD6.svg?style=for-the-badge&logo=go)](https://wails.io)
