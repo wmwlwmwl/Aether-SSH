@@ -1,13 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { CanvasAddon } from '@xterm/addon-canvas';
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime.js';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import '@xterm/xterm/css/xterm.css';
+import defaultTermBg from '../assets/term_bg.png';
 
 // 参考 Netcatty / iTerm2 风格：深色带微蓝绿底色
 const XTERM_THEME = {
-  background:        '#0d1117',
+  background:        '#00000000',
   foreground:        '#cdd9e5',
   cursor:            '#22c55e',
   cursorAccent:      '#0d1117',
@@ -41,21 +43,36 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
 
     containerRef.current.innerHTML = '';
 
+    const fontSize = parseInt(localStorage.getItem('terminalFontSize') || '13', 10);
+
     const term = new XTerm({
       theme:            XTERM_THEME,
       fontFamily:       "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-      fontSize:         13,
-      lineHeight:       1.5,
+      fontSize:         fontSize,
+      lineHeight:       1.22,     // 1.22 紧凑行高，让文字排版密度适中，光标自动缩短并与字符等高，精致高级
       letterSpacing:    0.3,
       cursorBlink:      true,
       cursorStyle:      'bar',
+      cursorWidth:      1,        // 调整为 1 像素极致纤细光标
       scrollback:       5000,
+      allowTransparency: true,
       allowProposedApi: true,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(containerRef.current);
+
+    // ── 终端极速渲染器：Canvas 附加组件 ───────────────────────────
+    // 使用 xterm.js 的高性能 Canvas 渲染引擎，既能保持极低延迟流畅度，
+    // 又能完美原生支持背景透明通道 (allowTransparency)。
+    let canvasAddon = null;
+    try {
+      canvasAddon = new CanvasAddon();
+      term.loadAddon(canvasAddon);
+    } catch (e) {
+      console.warn('Canvas addon failed, falling back to DOM renderer.', e);
+    }
 
     // ── 自定义快捷键 ────────────────────────────────────────────
     term.attachCustomKeyEventHandler((e) => {
@@ -79,17 +96,20 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
       const pressedStr = keys.join('+');
 
       if (pressedStr === customShortcuts.copy) {
+        e.preventDefault();
         const selection = term.getSelection();
         if (selection) navigator.clipboard.writeText(selection);
         return false;
       }
       if (pressedStr === customShortcuts.paste) {
+        e.preventDefault();
         navigator.clipboard.readText().then((text) => {
           if (text) AppGo.WriteTerminal(sessionId, text);
         });
         return false;
       }
       if (pressedStr === customShortcuts.clear) {
+        e.preventDefault();
         term.clear();
         return false;
       }
@@ -103,8 +123,14 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
       try { fitAddon.fit(); } catch (_) {}
     }, 100);
 
-    let inputBuffer = '';
+    // ── 输入防抖缓冲管线 ──────────────────────────────────────────
+    let inputBuffer = '';      // 仅用于本地指令历史提取
+    let sendBuffer = '';       // 用于防止 IPC 拥塞的发送缓冲
+    let sendTimer = null;
+    let isCooldown = false;
+
     term.onData((data) => {
+      // 记录历史指令逻辑
       if (data === '\r' || data === '\n' || data === '\r\n') {
         const cmd = inputBuffer.trim();
         if (cmd) {
@@ -118,7 +144,23 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
       } else if (data.length === 1 && data >= ' ' && data <= '~') {
         inputBuffer += data;
       }
-      AppGo.WriteTerminal(sessionId, data);
+
+      // 前端发送节流逻辑 (首键 0 延迟，后续 5ms 微批聚合)
+      if (!isCooldown) {
+        // 第一键立刻无阻碍直通后端，手感极佳
+        AppGo.WriteTerminal(sessionId, data);
+        isCooldown = true;
+        sendTimer = setTimeout(() => {
+          if (sendBuffer.length > 0) {
+            AppGo.WriteTerminal(sessionId, sendBuffer);
+            sendBuffer = '';
+          }
+          isCooldown = false;
+        }, 5); // 5ms 等待窗口
+      } else {
+        // 冷却期内的连续极速输入（如长按退格/高频敲击/粘贴），暂存到缓冲
+        sendBuffer += data;
+      }
     });
 
     term.onResize(({ cols, rows }) => {
@@ -127,12 +169,30 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
 
     return () => {
       clearTimeout(fitTimer);
+      clearTimeout(sendTimer); // 确保在卸载时清理定时器
       termRef.current     = null;
       fitAddonRef.current = null;
+      if (canvasAddon) {
+        try { canvasAddon.dispose(); } catch (_) {}
+      }
       try { term.dispose(); } catch (_) {}
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  // ── 监听字体大小修改事件 ──────────────────────────────────────
+  useEffect(() => {
+    const handleFontSizeChange = (e) => {
+      if (termRef.current) {
+        termRef.current.options.fontSize = e.detail;
+        if (fitAddonRef.current) {
+          try { fitAddonRef.current.fit(); } catch (_) {}
+        }
+      }
+    };
+    window.addEventListener('terminal-font-size-changed', handleFontSizeChange);
+    return () => window.removeEventListener('terminal-font-size-changed', handleFontSizeChange);
+  }, []);
 
   // ── 接收 SSH 数据 ───────────────────────────────────────────────
   useEffect(() => {
@@ -176,6 +236,23 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
     return () => window.removeEventListener('resize', handleResize);
   }, [isActive]);
 
+  // ── 背景管理与刷新 ────────────────────────────────────────────────
+  const [bgInfo, setBgInfo] = useState({
+    image: localStorage.getItem('termBgImage') || '',
+    opacity: parseFloat(localStorage.getItem('termBgOpacity') || '0.15')
+  });
+
+  useEffect(() => {
+    const handleBgChange = () => {
+      setBgInfo({
+        image: localStorage.getItem('termBgImage') || '',
+        opacity: parseFloat(localStorage.getItem('termBgOpacity') || '0.15')
+      });
+    };
+    window.addEventListener('terminal-bg-changed', handleBgChange);
+    return () => window.removeEventListener('terminal-bg-changed', handleBgChange);
+  }, []);
+
   const isConnected  = status === 'connected';
   const isConnecting = status === 'connecting';
   const isError      = status === 'error';
@@ -186,15 +263,31 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
       height: '100%',
       display: 'flex',
       flexDirection: 'column',
-      background: '#0d1117',
+      background: '#0d1117', // Fallback color
+      overflow: 'hidden',
     }}>
-      {/* ── Session 状态栏（参考 Netcatty Local Terminal 顶栏）── */}
+      {/* 底层壁纸 */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        backgroundImage: `url(${bgInfo.image || defaultTermBg})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        opacity: bgInfo.opacity,
+        pointerEvents: 'none',
+        zIndex: 0
+      }} />
+      
+      {/* 内容层(置于背景之上) */}
+      <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* ── Session 状态栏（极简、高颜值设计） ── */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '6px 14px',
-        background: '#161b22',
+        padding: '8px 14px',
+        background: 'rgba(22, 27, 34, 0.75)',
+        backdropFilter: 'blur(8px)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         fontSize: 12,
         color: '#8b949e',
@@ -219,6 +312,8 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         <span style={{ color: '#cdd9e5', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>
           {serverName || 'Terminal'}
         </span>
+        
+        {/* 右侧极简状态显示 */}
         <span style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.5, fontFamily: 'var(--font-mono)' }}>
           {isConnected  ? 'Connected'
            : isConnecting ? 'Connecting...'
@@ -233,10 +328,11 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         style={{
           flex: 1,
           minHeight: 0,
-          padding: '4px 4px 2px 8px',
-          background: '#0d1117',
+          padding: '8px 4px 6px 12px',
+          background: 'transparent',
         }}
       />
+      </div>
     </div>
   );
 }

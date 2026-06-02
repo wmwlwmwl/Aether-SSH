@@ -39,6 +39,8 @@ const I18N = {
       langDesc: '选择界面语言',
       fontLabel: '界面字体',
       fontDesc: '选择软件界面使用的字体',
+      termFontLabel: '终端字体大小',
+      termFontDesc: '调节终端的字符显示大小',
       themeTitle: '界面主题',
       themeLabel: '主题',
       themeDesc: '选择浅色、深色或跟随系统设置',
@@ -48,6 +50,12 @@ const I18N = {
       accentTitle: '强调色',
       accentLabel: '使用自定义强调色',
       accentDesc: '覆盖主题自带的强调色',
+      termBgTitle: '终端背景',
+      termBgLabel: '自定义终端壁纸',
+      termBgDesc: '设置终端底部的自定义背景图片',
+      termBgOpacityLabel: '壁纸可见度',
+      termBgUpload: '上传图片',
+      termBgReset: '恢复默认',
     }
   },
   'en-US': {
@@ -85,6 +93,8 @@ const I18N = {
       langDesc: 'Choose interface language',
       fontLabel: 'Interface Font',
       fontDesc: 'Choose the font used in the interface',
+      termFontLabel: 'Terminal Font Size',
+      termFontDesc: 'Adjust terminal font size',
       themeTitle: 'Interface Theme',
       themeLabel: 'Theme',
       themeDesc: 'Choose Light, Dark or System',
@@ -94,6 +104,12 @@ const I18N = {
       accentTitle: 'Accent Color',
       accentLabel: 'Use Custom Accent',
       accentDesc: 'Override default accent color',
+      termBgTitle: 'Terminal Background',
+      termBgLabel: 'Custom Wallpaper',
+      termBgDesc: 'Set custom background image for terminals',
+      termBgOpacityLabel: 'Wallpaper Visibility',
+      termBgUpload: 'Upload Image',
+      termBgReset: 'Reset Default',
     }
   }
 };
@@ -231,6 +247,9 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   const [useCustomAccent, setUseCustomAccent] = useState(localStorage.getItem('useCustomAccent') === 'true');
   const [language, setLanguage] = useState(localStorage.getItem('appLanguage') || 'zh-CN');
   const [appFont, setAppFont] = useState(localStorage.getItem('appFont') || 'system-ui');
+  const [terminalFontSize, setTerminalFontSize] = useState(parseInt(localStorage.getItem('terminalFontSize') || '13', 10));
+  const [termBgImage, setTermBgImage] = useState(localStorage.getItem('termBgImage') || '');
+  const [termBgOpacity, setTermBgOpacity] = useState(parseFloat(localStorage.getItem('termBgOpacity') || '0.15'));
 
   const t = I18N[language] || I18N['zh-CN'];
 
@@ -335,6 +354,41 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
     document.body.style.fontFamily = fontVal;
     
     addToast('界面字体已应用', 'success');
+  };
+
+  const handleTerminalFontChange = (e) => {
+    const size = parseInt(e.target.value, 10);
+    setTerminalFontSize(size);
+    localStorage.setItem('terminalFontSize', size);
+    window.dispatchEvent(new CustomEvent('terminal-font-size-changed', { detail: size }));
+  };
+
+  const handleTermBgUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result;
+      setTermBgImage(base64);
+      localStorage.setItem('termBgImage', base64);
+      window.dispatchEvent(new CustomEvent('terminal-bg-changed'));
+      addToast(language === 'zh-CN' ? '终端壁纸已更新' : 'Wallpaper updated', 'success');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleTermBgReset = () => {
+    setTermBgImage('');
+    localStorage.removeItem('termBgImage');
+    window.dispatchEvent(new CustomEvent('terminal-bg-changed'));
+    addToast(language === 'zh-CN' ? '已恢复默认壁纸' : 'Reset to default', 'success');
+  };
+
+  const handleTermBgOpacityChange = (e) => {
+    const val = parseFloat(e.target.value);
+    setTermBgOpacity(val);
+    localStorage.setItem('termBgOpacity', String(val));
+    window.dispatchEvent(new CustomEvent('terminal-bg-changed'));
   };
 
 
@@ -755,6 +809,25 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         <option value="JetBrains Mono">JetBrains Mono</option>
                       </select>
                     </div>
+                    <div className="divider" style={{ margin: '12px 0', borderTop: '1px solid var(--border)' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.termFontLabel}</div>
+                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.termFontDesc}</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <input 
+                          type="range" 
+                          min="10" 
+                          max="28" 
+                          step="1" 
+                          value={terminalFontSize} 
+                          onChange={handleTerminalFontChange} 
+                          style={{ cursor: 'pointer' }}
+                        />
+                        <span style={{ fontSize: 13, width: 32, textAlign: 'right', color: 'var(--text-1)' }}>{terminalFontSize}px</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -814,6 +887,48 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                     </div>
                   </div>
                 </div>
+
+                <div>
+                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>{t.appearance.termBgTitle}</h3>
+                  <div className="form-group" style={{ background: 'var(--bg-2)', padding: 16, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.termBgLabel}</div>
+                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.termBgDesc}</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        {termBgImage && (
+                          <button className="btn btn-ghost btn-sm" onClick={handleTermBgReset} style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                            {t.appearance.termBgReset}
+                          </button>
+                        )}
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', fontSize: 12, borderRadius: 'var(--radius-sm)' }}>
+                          {t.appearance.termBgUpload}
+                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleTermBgUpload} />
+                        </label>
+                      </div>
+                    </div>
+                    <div className="divider" style={{ margin: '12px 0', borderTop: '1px solid var(--border)' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.termBgOpacityLabel}</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <input 
+                          type="range" 
+                          min="0.0" 
+                          max="1.0" 
+                          step="0.05" 
+                          value={termBgOpacity} 
+                          onChange={handleTermBgOpacityChange} 
+                          style={{ cursor: 'pointer' }}
+                        />
+                        <span style={{ fontSize: 13, width: 32, textAlign: 'right', color: 'var(--text-1)' }}>{Math.round(termBgOpacity * 100)}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
               </div>
             )}
 

@@ -145,8 +145,8 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 
 	modes := ssh.TerminalModes{
 		ssh.ECHO:          1,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
+		ssh.TTY_OP_ISPEED: 115200,
+		ssh.TTY_OP_OSPEED: 115200,
 	}
 
 	if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
@@ -189,17 +189,76 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 }
 
 func (m *SSHManager) pipeOutput(sessionId string, r io.Reader) {
-	buf := make([]byte, 8192)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			if m.ctx != nil {
-				// Emit event to frontend
-				runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(buf[:n]))
+	buf := make([]byte, 32768)
+	dataChan := make(chan []byte, 1024)
+
+	// 无阻塞读取流
+	go func() {
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				b := make([]byte, n)
+				copy(b, buf[:n])
+				dataChan <- b
+			}
+			if err != nil {
+				close(dataChan)
+				break
 			}
 		}
-		if err != nil {
-			break
+	}()
+
+	var batch []byte
+	timer := time.NewTimer(0)
+	<-timer.C // init stopped
+	cooldown := false
+	cooldownDuration := 15 * time.Millisecond
+
+	for {
+		select {
+		case b, ok := <-dataChan:
+			if !ok {
+				if len(batch) > 0 && m.ctx != nil {
+					runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(batch))
+				}
+				return
+			}
+			
+			if !cooldown {
+				// 首包零延迟直通！极速回显！
+				if m.ctx != nil {
+					runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(b))
+				}
+				// 启动冷却期，后续15ms内到达的数据将暂时被聚合
+				cooldown = true
+				timer.Reset(cooldownDuration)
+			} else {
+				// 冷却期内，累积数据
+				batch = append(batch, b...)
+				if len(batch) >= 32768 {
+					if m.ctx != nil {
+						runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(batch))
+					}
+					batch = batch[:0]
+					if !timer.Stop() {
+						select { case <-timer.C: default: }
+					}
+					timer.Reset(cooldownDuration)
+				}
+			}
+		case <-timer.C:
+			// 冷却期结束，如果有积压数据，一次性发出
+			if len(batch) > 0 {
+				if m.ctx != nil {
+					runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(batch))
+				}
+				batch = batch[:0]
+				// 继续冷却，因为流量还在持续
+				timer.Reset(cooldownDuration)
+			} else {
+				// 流量停止，解除冷却
+				cooldown = false
+			}
 		}
 	}
 }

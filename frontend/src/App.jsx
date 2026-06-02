@@ -31,6 +31,79 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [monitoringEnabled, setMonitoringEnabled] = useState({}); // { [sessionId]: boolean }
+  const [serverListViewMode, setServerListViewMode] = useState(localStorage.getItem('serverListViewMode') || 'grid'); // 'grid' | 'table'
+  const [fileManagerPosition, setFileManagerPosition] = useState(localStorage.getItem('fileManagerPosition') || 'tab'); // 'tab' | 'right' | 'bottom'
+  
+  // ── 新增分屏拖拽大小控制状态与逻辑 ──────────────────────
+  const [leftSplitWidth, setLeftSplitWidth] = useState(() => {
+    return parseInt(localStorage.getItem('leftSplitWidth') || '320', 10);
+  });
+  const [bottomSplitHeight, setBottomSplitHeight] = useState(() => {
+    return parseInt(localStorage.getItem('bottomSplitHeight') || '250', 10);
+  });
+
+  const leftSplitWidthRef = useRef(leftSplitWidth);
+  const bottomSplitHeightRef = useRef(bottomSplitHeight);
+
+  const updateLeftSplitWidth = (w) => {
+    setLeftSplitWidth(w);
+    leftSplitWidthRef.current = w;
+  };
+  const updateBottomSplitHeight = (h) => {
+    setBottomSplitHeight(h);
+    bottomSplitHeightRef.current = h;
+  };
+
+  const startDrag = (e, direction) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startWidth = leftSplitWidthRef.current;
+    const startHeight = bottomSplitHeightRef.current;
+
+    const resizer = e.target;
+    resizer.classList.add('dragging');
+
+    document.body.style.cursor = direction === 'left' ? 'col-resize' : 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (moveEvent) => {
+      if (direction === 'left') {
+        const deltaX = moveEvent.clientX - startX;
+        const newWidth = Math.max(180, Math.min(800, startWidth + deltaX));
+        updateLeftSplitWidth(newWidth);
+      } else {
+        const deltaY = startY - moveEvent.clientY; // 往上拖高度变大
+        const newHeight = Math.max(100, Math.min(600, startHeight + deltaY));
+        updateBottomSplitHeight(newHeight);
+      }
+    };
+
+    const handleMouseUp = () => {
+      resizer.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+
+      if (direction === 'left') {
+        localStorage.setItem('leftSplitWidth', leftSplitWidthRef.current.toString());
+      } else {
+        localStorage.setItem('bottomSplitHeight', bottomSplitHeightRef.current.toString());
+      }
+
+      // 通知所有终端自适应重绘
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+      }, 50);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+  // ────────────────────────────────────────────────────────
+
   const pingTimerRef = useRef(null);
 
   // ── 新增主页仪表盘状态 ──────────────────────────────────
@@ -394,7 +467,7 @@ export default function App() {
           </div>
           
           {sessions.length > 0 && (
-            <div className="tab-bar no-drag" style={{ flex: 1, padding: '0 16px', background: 'transparent', borderBottom: 'none', height: '100%', alignItems: 'center' }}>
+            <div className="tab-bar" style={{ flex: 1, padding: '0 16px', background: 'transparent', borderBottom: 'none', height: '100%', alignItems: 'center' }}>
               <button 
                 className="btn btn-ghost btn-sm no-drag" 
                 onClick={() => setActiveSessionId(null)} 
@@ -423,7 +496,7 @@ export default function App() {
               ))}
             </div>
           )}
-          {sessions.length === 0 && <div style={{ flex: 1 }} className="no-drag"></div>}
+          {sessions.length === 0 && <div style={{ flex: 1 }}></div>}
 
           <div className="window-controls">
             <button className="btn btn-ghost btn-icon no-drag" onClick={() => setShowSettings(true)} title="设置" style={{ fontSize: '18px' }}>⚙️</button>
@@ -565,9 +638,27 @@ export default function App() {
               {/* 🖥 全部主机目录 */}
               <div className="hosts-section-container">
                 <div className="section-title-container">
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <span className="section-title-icon">🖥</span>
                     <span className="section-title">{t('主机')}</span>
+                    <div className="view-mode-toggles" style={{ display: 'flex', background: 'var(--bg-2)', borderRadius: 6, padding: 2 }}>
+                      <button
+                        className={`btn-icon ${serverListViewMode === 'grid' ? 'active' : ''}`}
+                        onClick={() => { setServerListViewMode('grid'); localStorage.setItem('serverListViewMode', 'grid'); }}
+                        title="卡片视图"
+                        style={{ padding: '2px 6px', fontSize: 12, background: serverListViewMode === 'grid' ? 'var(--bg-3)' : 'transparent', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                      >
+                        🔲
+                      </button>
+                      <button
+                        className={`btn-icon ${serverListViewMode === 'table' ? 'active' : ''}`}
+                        onClick={() => { setServerListViewMode('table'); localStorage.setItem('serverListViewMode', 'table'); }}
+                        title="列表视图"
+                        style={{ padding: '2px 6px', fontSize: 12, background: serverListViewMode === 'table' ? 'var(--bg-3)' : 'transparent', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                      >
+                        📄
+                      </button>
+                    </div>
                   </div>
                   <button
                     className="btn btn-primary btn-sm"
@@ -584,6 +675,7 @@ export default function App() {
                     pings={pings}
                     sessions={sessions}
                     activeSessionId={activeSessionId}
+                    viewMode={serverListViewMode}
                     onConnect={connectServer}
                     onEdit={(s) => { setEditServer(s); setShowAddServer(true); }}
                     onDelete={handleDeleteServer}
@@ -597,7 +689,7 @@ export default function App() {
         <div style={{ display: activeSessionId !== null ? 'flex' : 'none', flexDirection: 'column', height: '100%', flex: 1 }}>
             {/* Content Type Tabs */}
             {activeSession && (
-              <div className="content-tab-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <div className="content-tab-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingRight: 16 }}>
                 <div style={{ display: 'flex', gap: 2 }}>
                   <button
                     className={`content-tab ${contentTab === 'terminal' ? 'active' : ''}`}
@@ -605,13 +697,15 @@ export default function App() {
                   >
                     🖥 {t('终端')}
                   </button>
-                  <button
-                    className={`content-tab ${contentTab === 'files' ? 'active' : ''}`}
-                    onClick={() => setContentTab('files')}
-                    disabled={activeSession.status !== 'connected'}
-                  >
-                    📁 {t('文件管理')}
-                  </button>
+                  {fileManagerPosition === 'tab' && (
+                    <button
+                      className={`content-tab ${contentTab === 'files' ? 'active' : ''}`}
+                      onClick={() => setContentTab('files')}
+                      disabled={activeSession.status !== 'connected'}
+                    >
+                      📁 {t('文件管理')}
+                    </button>
+                  )}
                   <button
                     className={`content-tab ${contentTab === 'history' ? 'active' : ''}`}
                     onClick={() => setContentTab('history')}
@@ -620,13 +714,36 @@ export default function App() {
                     📜 {t('历史指令')}
                   </button>
                 </div>
+                
+                {activeSession.status === 'connected' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>{t('文件管理器布局')}:</span>
+                    <select
+                      className="select-compact"
+                      style={{ padding: '2px 8px', fontSize: 12, height: 24 }}
+                      value={fileManagerPosition}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFileManagerPosition(val);
+                        localStorage.setItem('fileManagerPosition', val);
+                        if (val !== 'tab' && contentTab === 'files') {
+                          setContentTab('terminal'); // 如果切走，自动返回终端
+                        }
+                      }}
+                    >
+                      <option value="tab">标签页</option>
+                      <option value="left">左侧分屏</option>
+                      <option value="bottom">底部分屏</option>
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Session Content */}
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
-              {/* 左侧：会话主体（终端/文件） */}
-              <div style={{ flex: 1, height: '100%', position: 'relative', overflow: 'hidden' }}>
+              {/* 左侧/上侧主体容器 */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: fileManagerPosition === 'bottom' ? 'column' : 'row', height: '100%', position: 'relative', overflow: 'hidden' }}>
                 {sessions.map((s) => (
                   <div
                     key={s.id}
@@ -634,33 +751,101 @@ export default function App() {
                       position: 'absolute',
                       inset: 0,
                       display: activeSessionId === s.id ? 'flex' : 'none',
-                      flexDirection: 'column',
+                      flexDirection: fileManagerPosition === 'bottom' ? 'column' : 'row',
                     }}
                   >
-                    {/* 使用常驻渲染配合 display 控制，防止组件销毁导致状态丢失或连接重建 */}
-                    <div style={{ display: (contentTab === 'terminal' || s.status !== 'connected') ? 'block' : 'none', height: '100%', flex: 1 }}>
-                      <Terminal
-                        sessionId={s.id}
-                        status={s.status}
-                        isActive={activeSessionId === s.id && contentTab === 'terminal'}
-                        serverName={s.serverName}
-                      />
-                    </div>
-                    {s.status === 'connected' && (
-                      <div style={{ display: contentTab === 'files' ? 'block' : 'none', height: '100%', flex: 1 }}>
-                        <FileManager
-                          sessionId={s.id}
-                          addToast={addToast}
+                    {/* 辅助视口 (分屏模式下的文件管理器，如果是左侧则排在前面) */}
+                    {s.status === 'connected' && fileManagerPosition === 'left' && (
+                      <>
+                        <div style={{
+                          width: leftSplitWidth + 'px',
+                          borderRight: '1px solid var(--border)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minWidth: 180,
+                          flexShrink: 0,
+                        }}>
+                          <FileManager
+                            sessionId={s.id}
+                            addToast={addToast}
+                          />
+                        </div>
+                        <div
+                          className="split-resizer-v"
+                          onMouseDown={(e) => startDrag(e, 'left')}
+                          style={{
+                            width: '4px',
+                            cursor: 'col-resize',
+                            background: 'rgba(255, 255, 255, 0.02)',
+                            zIndex: 10,
+                            position: 'relative',
+                            marginLeft: '-2px',
+                            marginRight: '-2px',
+                            transition: 'background 0.2s',
+                          }}
                         />
-                      </div>
+                      </>
                     )}
-                    {s.status === 'connected' && (
-                      <div style={{ display: contentTab === 'history' ? 'block' : 'none', height: '100%', flex: 1 }}>
-                        <CommandHistory
+
+                    {/* 主要视口 (终端/标签页模式下的文件) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', minWidth: 0, overflow: 'hidden' }}>
+                      <div style={{ display: (contentTab === 'terminal' || s.status !== 'connected') ? 'block' : 'none', height: '100%', flex: 1 }}>
+                        <Terminal
                           sessionId={s.id}
-                          addToast={addToast}
+                          status={s.status}
+                          isActive={activeSessionId === s.id && (contentTab === 'terminal' || fileManagerPosition !== 'tab')}
+                          serverName={s.serverName}
                         />
                       </div>
+                      {s.status === 'connected' && fileManagerPosition === 'tab' && (
+                        <div style={{ display: contentTab === 'files' ? 'block' : 'none', height: '100%', flex: 1 }}>
+                          <FileManager
+                            sessionId={s.id}
+                            addToast={addToast}
+                          />
+                        </div>
+                      )}
+                      {s.status === 'connected' && (
+                        <div style={{ display: contentTab === 'history' ? 'block' : 'none', height: '100%', flex: 1 }}>
+                          <CommandHistory
+                            sessionId={s.id}
+                            addToast={addToast}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 辅助视口 (分屏模式下的文件管理器，如果是底部则排在后面) */}
+                    {s.status === 'connected' && fileManagerPosition === 'bottom' && (
+                      <>
+                        <div
+                          className="split-resizer-h"
+                          onMouseDown={(e) => startDrag(e, 'bottom')}
+                          style={{
+                            height: '4px',
+                            cursor: 'row-resize',
+                            background: 'rgba(255, 255, 255, 0.02)',
+                            zIndex: 10,
+                            position: 'relative',
+                            marginTop: '-2px',
+                            marginBottom: '-2px',
+                            transition: 'background 0.2s',
+                          }}
+                        />
+                        <div style={{
+                          height: bottomSplitHeight + 'px',
+                          borderTop: '1px solid var(--border)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minHeight: 100,
+                          flexShrink: 0,
+                        }}>
+                          <FileManager
+                            sessionId={s.id}
+                            addToast={addToast}
+                          />
+                        </div>
+                      </>
                     )}
                   </div>
                 ))}

@@ -42,6 +42,7 @@ export default function ServerList({
   pings,
   sessions,
   activeSessionId,
+  viewMode = 'grid',
   onConnect,
   onEdit,
   onDelete,
@@ -95,6 +96,7 @@ export default function ServerList({
 
   return (
     <>
+      {viewMode === 'grid' ? (
       <div className="server-grid">
         {servers.map((server) => {
           const ping = pings[server.id];
@@ -224,6 +226,88 @@ export default function ServerList({
           );
         })}
       </div>
+      ) : (
+      <div className="server-table-container">
+        <table className="server-table">
+          <thead>
+            <tr>
+              <th>系统</th>
+              <th>别名</th>
+              <th>主机地址</th>
+              <th>用户名</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {servers.map((server) => {
+              const ping = pings[server.id];
+              const latClass = ping ? LATENCY_CLASS(ping.latency) : 'offline';
+              const active = isActive(server);
+              const connected = hasSession(server);
+              const sessionForServer = sessions.find(s => s.serverId === server.id && s.status === 'connected');
+              const osInfo = getOSInfo(server.name, server.os, sessionForServer?.osInfo || null);
+              const isHovered = hoveredId === server.id;
+
+              return (
+                <tr
+                  key={server.id}
+                  className={`server-table-row ${active ? 'active' : ''}`}
+                  onClick={() => onConnect(server)}
+                  onContextMenu={(e) => handleContextMenu(e, server)}
+                  onMouseEnter={() => setHoveredId(server.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                >
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 20, height: 20, color: osInfo.bg }}>{osInfo.icon}</div>
+                      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{osInfo.label}</span>
+                    </div>
+                  </td>
+                  <td style={{ fontWeight: 500, color: 'var(--text-1)' }}>
+                    {server.name || server.host}
+                    {connected && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--green)', padding: '2px 4px', background: 'rgba(34,197,94,0.1)', borderRadius: 4 }}>CONN</span>}
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-2)' }}>
+                    {server.host}:{server.port || 22}
+                  </td>
+                  <td style={{ color: 'var(--text-2)' }}>{server.username}</td>
+                  <td>
+                    {ping?.online && ping?.latency !== undefined && ping?.latency !== null ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{
+                          width: 8, height: 8, borderRadius: '50%',
+                          background: latClass === 'good' ? '#4ade80' : latClass === 'warn' ? '#facc15' : '#f87171'
+                        }} />
+                        <span style={{ fontSize: 12, color: latClass === 'good' ? '#4ade80' : latClass === 'warn' ? '#facc15' : '#f87171', fontFamily: 'var(--font-mono)' }}>
+                          {ping.latency === -1 ? '<1ms' : `${ping.latency}ms`}
+                        </span>
+                      </div>
+                    ) : (
+                      ping !== undefined && !ping?.online ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#f87171' }}>
+                          <span style={{ fontSize: 14, fontWeight: 'bold' }}>✕</span>
+                          <span style={{ fontSize: 12 }}>Offline</span>
+                        </div>
+                      ) : <span style={{ color: 'var(--text-4)' }}>-</span>
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onEdit(server); }}
+                      className="btn btn-ghost btn-sm"
+                      style={{ padding: '4px 8px', fontSize: 12 }}
+                    >
+                      编辑
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      )}
 
       {/* Context Menu */}
       {menuServer && (
