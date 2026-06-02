@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import { setLanguage as setGlobalLanguage } from '../i18n.js';
 import logoImg from '../assets/logo.png';
+import { APP_VERSION } from '../config.js';
 
 const I18N = {
   'zh-CN': {
@@ -130,7 +131,7 @@ const defaultWebdavForm = {
 };
 
 export default function SettingsModal({ onClose, addToast, onRestored }) {
-  const CURRENT_VERSION = '1.0.4';
+  const CURRENT_VERSION = APP_VERSION;
   const [updateInfo, setUpdateInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(-1);

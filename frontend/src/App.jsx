@@ -11,6 +11,7 @@ import Toast from './components/Toast.jsx';
 import CommandHistory from './components/CommandHistory.jsx';
 import GlobalDialog from './components/GlobalDialog.jsx';
 import { useTranslation } from './i18n.js';
+import { APP_VERSION } from './config.js';
 
 import logoImg from './assets/logo.png';
 
@@ -33,6 +34,11 @@ export default function App() {
   const [monitoringEnabled, setMonitoringEnabled] = useState({}); // { [sessionId]: boolean }
   const [serverListViewMode, setServerListViewMode] = useState(localStorage.getItem('serverListViewMode') || 'grid'); // 'grid' | 'table'
   const [fileManagerPosition, setFileManagerPosition] = useState(localStorage.getItem('fileManagerPosition') || 'tab'); // 'tab' | 'right' | 'bottom'
+  
+  // ── 新增自动检测更新状态 ──────────────────────────────
+  const [startupUpdateInfo, setStartupUpdateInfo] = useState(null);
+  const [downloadProgress, setDownloadProgress] = useState(-1);
+  const [isUpdateModalVisible, setIsUpdateModalVisible] = useState(false);
   
   // ── 新增分屏拖拽大小控制状态与逻辑 ──────────────────────
   const [leftSplitWidth, setLeftSplitWidth] = useState(() => {
@@ -144,6 +150,83 @@ export default function App() {
       document.documentElement.style.setProperty('--green', themeAccent);
     }
   }, []);
+
+  // ── 自动检测更新机制 ────────────────────────────────────
+  useEffect(() => {
+    const checkUpdate = async () => {
+      try {
+        const res = await fetch('https://api.github.com/repos/angusdevgo/Aether-SSH/releases/latest');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.tag_name) {
+          let latest = data.tag_name.replace(/^v+/i, '');
+          const isNewer = (latestVer, currentVer) => {
+            if (latestVer === currentVer) return false;
+            const lParts = latestVer.split('.').map(Number);
+            const cParts = currentVer.split('.').map(Number);
+            for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+              const l = lParts[i] || 0;
+              const c = cParts[i] || 0;
+              if (l > c) return true;
+              if (l < c) return false;
+            }
+            return false;
+          };
+
+          if (isNewer(latest, APP_VERSION)) {
+            let downloadAssetUrl = '';
+            let downloadFilename = '';
+            if (data.assets && data.assets.length > 0) {
+               const exeAsset = data.assets.find(a => a.name.endsWith('.exe'));
+               if (exeAsset) {
+                   downloadAssetUrl = exeAsset.browser_download_url;
+                   downloadFilename = exeAsset.name;
+               }
+            }
+            setStartupUpdateInfo({
+              version: 'v' + latest,
+              url: downloadAssetUrl || data.html_url,
+              filename: downloadFilename || 'update.exe',
+            });
+            setIsUpdateModalVisible(true);
+          }
+        }
+      } catch (err) {}
+    };
+    
+    // 延迟 2.5 秒触发检测，避免阻塞应用首次极速渲染
+    setTimeout(checkUpdate, 2500);
+  }, []);
+
+  useEffect(() => {
+    const handleProgress = (e) => {
+      if (typeof e.detail === 'number') {
+        setDownloadProgress(e.detail);
+      }
+    };
+    window.addEventListener('app-update-progress', handleProgress);
+    return () => window.removeEventListener('app-update-progress', handleProgress);
+  }, []);
+
+  const handleApplyStartupUpdate = async () => {
+    if (!startupUpdateInfo || !startupUpdateInfo.url) return;
+    if (downloadProgress >= 0) return; // 正在下载中
+    
+    if (!startupUpdateInfo.url.endsWith('.exe')) {
+       window.runtime?.BrowserOpenURL(startupUpdateInfo.url);
+       setIsUpdateModalVisible(false);
+       return;
+    }
+
+    setDownloadProgress(0);
+    try {
+      await AppGo.UpdateApp(startupUpdateInfo.url, startupUpdateInfo.filename);
+      // 后端成功后会自动重启应用
+    } catch (err) {
+      addToast(`自动更新失败: ${err}`, 'error', 5000);
+      setDownloadProgress(-1);
+    }
+  };
 
   // ── 加载最近常用会话 ────────────────────────────────────
   useEffect(() => {
@@ -1119,9 +1202,255 @@ export default function App() {
               onMouseEnter={e => e.currentTarget.style.color = '#f0f6fc'}
               onMouseLeave={e => e.currentTarget.style.color = '#6e7681'}
               onClick={Quit}
+                    { label: '类型', value: 'ED25519' },
+                  ].map(({ label, value }) => (
+                    <div key={label}>
+                      <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: 14, color: 'var(--text-1)', fontFamily: 'var(--font-mono)' }}>{value}</div>
+                    </div>
+                  ))}
+                  <div>
+                    <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 8 }}>密钥导出</div>
+                    <button
+                      className="btn btn-primary"
+                      style={{ width: '100%', justifyContent: 'center' }}
+                      onClick={() => addToast('密钥功能需要在连接到服务器后使用', 'info', 3000)}
+                    >
+                      导出到主机
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toasts ────────────────────────────────────────── */}
+      <Toast toasts={toasts} />
+      <GlobalDialog />
+
+      {/* ── 连接进度卡片 Overlay（参考图一）──────────────── */}
+      {connectingServer && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+        }}>
+          <div style={{
+            width: 380, borderRadius: 16, overflow: 'hidden',
+            background: 'rgba(22,27,34,0.97)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+            padding: '20px 24px 22px',
+          }}>
+            {/* 标题行：图标 + 名称 + 按钮 */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 18 }}>
+              <div style={{
+                width: 42, height: 42, borderRadius: 10, flexShrink: 0,
+                background: 'linear-gradient(135deg,#ef4444,#dc2626)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 22,
+              }}>🖥</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#f0f6fc', marginBottom: 3 }}>
+                  {connectingServer.server.name || connectingServer.server.host}
+                </div>
+                <div style={{ fontSize: 12, color: '#3fb950', fontFamily: 'monospace' }}>
+                  SSH {connectingServer.server.host}:{connectingServer.server.port || 22}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <button
+                  style={{
+                    padding: '5px 14px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
+                    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+                    color: '#8b949e',
+                  }}
+                  onClick={() => setConnectingServer(null)}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+
+            {/* 双进度条（参考图一）*/}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              {/* 左进度点 */}
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#22c55e', flexShrink: 0, boxShadow: '0 0 8px #22c55e' }} />
+              {/* 进度条 */}
+              <div style={{ flex: 1, height: 4, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 4,
+                  background: 'linear-gradient(90deg, #22c55e, #86efac)',
+                  animation: 'ssh-progress-indeterminate 1.4s ease-in-out infinite',
+                }} />
+              </div>
+              {/* WiFi 图标 */}
+              <div style={{ flexShrink: 0, fontSize: 14, color: '#22c55e' }}>📡</div>
+              {/* 第二段进度条 */}
+              <div style={{ flex: 1, height: 4, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 4,
+                  background: 'linear-gradient(90deg, #22c55e, #86efac)',
+                  animation: 'ssh-progress-indeterminate 1.4s ease-in-out 0.4s infinite',
+                }} />
+              </div>
+              {/* 右旋转图标 */}
+              <div style={{ flexShrink: 0, animation: 'spin 1.2s linear infinite', fontSize: 14, color: '#6e7681' }}>⟳</div>
+            </div>
+
+            {/* 提示文字 */}
+            <div style={{ fontSize: 12, color: '#6e7681', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>⟳</span>
+              正在建立 SSH 连接，请稍候...
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 托盘弹窗面板（参考图二/图三）─────────────────── */}
+      {showTrayPanel && (
+        <div
+          style={{
+            position: 'fixed', bottom: 48, right: 16, zIndex: 8000,
+            width: 280,
+            borderRadius: 14,
+            background: 'rgba(13,17,23,0.97)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+            overflow: 'hidden',
+            display: 'flex', flexDirection: 'column',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 标题栏 */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '14px 16px 12px',
+            borderBottom: '1px solid rgba(255,255,255,0.07)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <img src={logoImg} alt="logo" style={{ width: 24, height: 24, borderRadius: 6 }} />
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#f0f6fc' }}>Aether</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6e7681', fontSize: 14, padding: '2px 6px' }}
+                title="展开窗口"
+                onClick={() => { import('../wailsjs/runtime/runtime.js').then(r => r.WindowShow()); setShowTrayPanel(false); }}
+              >⤢</button>
+              <button
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6e7681', fontSize: 14, padding: '2px 6px' }}
+                onClick={() => setShowTrayPanel(false)}
+              >✕</button>
+            </div>
+          </div>
+
+          {/* 内容区 */}
+          <div style={{ flex: 1, padding: '12px 0', minHeight: 120 }}>
+            {sessions.filter(s => s.status === 'connected').length > 0 ? (
+              <>
+                <div style={{ fontSize: 11, color: '#6e7681', padding: '0 16px 8px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: 1 }}>会话</div>
+                {sessions.filter(s => s.status === 'connected').map(s => (
+                  <div key={s.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '10px 16px', cursor: 'pointer',
+                    transition: 'background 0.15s',
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    onClick={() => {
+                      import('../wailsjs/runtime/runtime.js').then(r => r.WindowShow());
+                      setActiveSessionId(s.id);
+                      setShowTrayPanel(false);
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
+                      <span style={{ fontSize: 14, color: '#f0f6fc', fontWeight: 500 }}>{s.serverName}</span>
+                    </div>
+                    <span style={{ fontSize: 12, color: '#6e7681' }}>已连接</span>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 16px', gap: 10 }}>
+                <div style={{ fontSize: 40 }}>😤</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#f0f6fc' }}>一切都很安静</div>
+                <div style={{ fontSize: 12, color: '#6e7681', textAlign: 'center', lineHeight: 1.6 }}>
+                  去连接个服务器吧，已经想念你了 🌿
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 底部退出按钮 */}
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', padding: '10px 16px' }}>
+            <button
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                width: '100%', background: 'none', border: 'none',
+                cursor: 'pointer', color: '#6e7681', fontSize: 13,
+                padding: '6px 0', transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = '#f0f6fc'}
+              onMouseLeave={e => e.currentTarget.style.color = '#6e7681'}
+              onClick={Quit}
             >
               <span>⏻</span> 退出 Aether
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 🚀 高颜值自动更新弹窗 */}
+      {isUpdateModalVisible && startupUpdateInfo && (
+        <div className="modal-overlay" style={{ zIndex: 9999, backdropFilter: 'blur(8px)', animation: 'fadeIn 0.3s ease-out' }}>
+          <div className="modal" style={{ width: 420, padding: 0, overflow: 'hidden', background: 'var(--bg-1)', border: '1px solid var(--border)', boxShadow: '0 24px 60px rgba(0,0,0,0.4)', borderRadius: 24, animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)' }}>
+            <div style={{ position: 'relative', height: 140, background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(34, 197, 94, 0.05) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid var(--border-light)' }}>
+              <div style={{ fontSize: 64, filter: 'drop-shadow(0 8px 16px rgba(16,185,129,0.3))', transform: 'translateY(10px)' }}>🚀</div>
+            </div>
+            
+            <div style={{ padding: '32px 32px 24px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-1)', marginBottom: 8, letterSpacing: '-0.5px' }}>
+                {t('发现新版本')} <span style={{ color: 'var(--green)', padding: '2px 8px', background: 'rgba(16,185,129,0.1)', borderRadius: 12, fontSize: 16, verticalAlign: 'middle', marginLeft: 8 }}>{startupUpdateInfo.version}</span>
+              </h2>
+              <p style={{ fontSize: 14, color: 'var(--text-3)', lineHeight: 1.6, marginBottom: 24 }}>
+                {t('为了给您提供更丝滑极致的连接体验，我们发布了全新的更新。强烈建议您立即升级。')}
+              </p>
+              
+              <div style={{ display: 'flex', gap: 12, width: '100%' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  style={{ flex: 1, padding: '10px', borderRadius: 12, fontSize: 14, fontWeight: 600, border: '1px solid var(--border)', background: 'var(--bg-2)' }}
+                  onClick={() => setIsUpdateModalVisible(false)}
+                  disabled={downloadProgress >= 0}
+                >
+                  {t('稍等')}
+                </button>
+                <button 
+                  className="btn btn-primary" 
+                  style={{ flex: 1, padding: '10px', borderRadius: 12, fontSize: 14, fontWeight: 600, position: 'relative', overflow: 'hidden', border: 'none', background: 'var(--green)', color: '#fff' }}
+                  onClick={handleApplyStartupUpdate}
+                  disabled={downloadProgress >= 0}
+                >
+                  {downloadProgress >= 0 && (
+                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${downloadProgress}%`, background: 'rgba(0,0,0,0.2)', transition: 'width 0.2s ease-out' }} />
+                  )}
+                  <span style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    {downloadProgress >= 0 ? (
+                      <>
+                        <svg className="spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                        {downloadProgress}%
+                      </>
+                    ) : (
+                      t('立即更新')
+                    )}
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
