@@ -156,14 +156,26 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
         // Clean the v prefix thoroughly using regex
         let latest = data.tag_name.replace(/^v+/i, '');
         
+        const isPortable = await AppGo.IsPortableVersion();
+        
         // Find exe asset
         let downloadAssetUrl = '';
         let downloadFilename = '';
         if (data.assets && data.assets.length > 0) {
-           const exeAsset = data.assets.find(a => a.name.endsWith('.exe'));
-           if (exeAsset) {
-               downloadAssetUrl = exeAsset.browser_download_url;
-               downloadFilename = exeAsset.name;
+           let targetAsset = null;
+           if (isPortable) {
+              targetAsset = data.assets.find(a => a.name.toLowerCase().includes('portable') && a.name.endsWith('.exe'));
+           } else {
+              targetAsset = data.assets.find(a => (a.name.toLowerCase().includes('setup') || a.name.toLowerCase().includes('installer')) && a.name.endsWith('.exe'));
+           }
+           
+           if (!targetAsset) {
+              targetAsset = data.assets.find(a => a.name.endsWith('.exe'));
+           }
+
+           if (targetAsset) {
+               downloadAssetUrl = targetAsset.browser_download_url;
+               downloadFilename = targetAsset.name;
            }
         }
 

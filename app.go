@@ -51,6 +51,16 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
+// IsPortableVersion checks if the current executable is the portable version
+func (a *App) IsPortableVersion() bool {
+	exePath, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	exeName := strings.ToLower(filepath.Base(exePath))
+	return strings.Contains(exeName, "portable")
+}
+
 // GetConnections returns all saved SSH connections
 func (a *App) GetConnections() []Connection {
 	return a.configManager.GetConnections()
