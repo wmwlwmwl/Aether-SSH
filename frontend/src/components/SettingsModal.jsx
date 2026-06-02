@@ -156,7 +156,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
         // Clean the v prefix thoroughly using regex
         let latest = data.tag_name.replace(/^v+/i, '');
         
-        const isPortable = await AppGo.IsPortableVersion();
+        let isPortable = false;
+        if (window?.go?.main?.App?.IsPortableVersion) {
+            isPortable = await window.go.main.App.IsPortableVersion();
+        }
         
         // Find exe asset
         let downloadAssetUrl = '';

@@ -20,6 +20,8 @@ export function GetConnections():Promise<Array<main.Connection>>;
 
 export function GetWebdavConfig():Promise<Record<string, string>>;
 
+export function IsPortableVersion():Promise<boolean>;
+
 export function ListDir(arg1:string,arg2:string):Promise<Array<Record<string, any>>>;
 
 export function ListWebdavBackups():Promise<Array<Record<string, any>>>;

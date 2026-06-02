@@ -38,6 +38,10 @@ export function GetWebdavConfig() {
   return window['go']['main']['App']['GetWebdavConfig']();
 }
 
+export function IsPortableVersion() {
+  return window['go']['main']['App']['IsPortableVersion']();
+}
+
 export function ListDir(arg1, arg2) {
   return window['go']['main']['App']['ListDir'](arg1, arg2);
 }
