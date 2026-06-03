@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from '../i18n.js';
+import { Monitor, Pencil, Link, Trash2 } from 'lucide-react';
 
 const LATENCY_CLASS = (ms) => {
   if (ms === null || ms === undefined) return 'offline';
@@ -84,7 +85,7 @@ export default function ServerList({
   if (servers.length === 0) {
     return (
       <div className="empty-state" style={{ marginTop: 20 }}>
-        <div className="empty-state-icon">🖥</div>
+        <div className="empty-state-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Monitor size={48} strokeWidth={1.5} /></div>
         <div className="empty-state-text">
           {t('暂无服务器')}
           <br />
@@ -219,7 +220,7 @@ export default function ServerList({
                     alignItems: 'center',
                   }}
                 >
-                  ✏️
+                  <Pencil size={14} />
                 </button>
               </div>
             </div>
@@ -320,13 +321,13 @@ export default function ServerList({
             className="context-menu-item"
             onClick={() => { onConnect(menuServer); setMenuServer(null); }}
           >
-            <span>🔗</span> {t('连接')}
+            <Link size={14} style={{ marginRight: 8 }} /> {t('连接')}
           </div>
           <div
             className="context-menu-item"
             onClick={() => { onEdit(menuServer); setMenuServer(null); }}
           >
-            <span>✏️</span> {t('编辑配置')}
+            <Pencil size={14} style={{ marginRight: 8 }} /> {t('编辑配置')}
           </div>
           <div className="context-menu-divider" />
           <div
@@ -338,7 +339,7 @@ export default function ServerList({
               setMenuServer(null);
             }}
           >
-            <span>🗑</span> {t('删除')}
+            <Trash2 size={14} style={{ marginRight: 8 }} /> {t('删除')}
           </div>
         </div>
       )}

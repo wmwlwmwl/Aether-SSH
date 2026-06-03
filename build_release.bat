@@ -37,12 +37,16 @@ if "%EXE_PATH%"=="" (
 
 echo [3/3] Archiving setup installer...
 set "OUTPUT_DIR=C:\Users\Angus\Desktop\Antigravity\SSH\exe"
+set "PORTABLE_DIR=C:\Users\Angus\Desktop\Antigravity\SSH\Portable"
 if not exist "%OUTPUT_DIR%" (
     mkdir "%OUTPUT_DIR%"
 )
+if not exist "%PORTABLE_DIR%" (
+    mkdir "%PORTABLE_DIR%"
+)
 
 copy /y "%EXE_PATH%" "%OUTPUT_DIR%\Aether_Setup_%VERSION%.exe" >nul
-copy /y "build\bin\Aether.exe" "%OUTPUT_DIR%\Aether_Portable_%VERSION%.exe" >nul
+copy /y "build\bin\Aether.exe" "%PORTABLE_DIR%\Aether_Portable_%VERSION%.exe" >nul
 
 echo.
 echo ==============================================

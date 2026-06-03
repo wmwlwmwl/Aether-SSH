@@ -266,6 +266,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   const [terminalFontSize, setTerminalFontSize] = useState(parseInt(localStorage.getItem('terminalFontSize') || '13', 10));
   const [termBgImage, setTermBgImage] = useState(localStorage.getItem('termBgImage') || '');
   const [termBgOpacity, setTermBgOpacity] = useState(parseFloat(localStorage.getItem('termBgOpacity') || '0.15'));
+  const [terminalColorTheme, setTerminalColorTheme] = useState(localStorage.getItem('terminalColorTheme') || 'aether');
 
   const t = I18N[language] || I18N['zh-CN'];
 
@@ -801,7 +802,6 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                 </div>
               </div>
             )}
-
             {activeTab === 'appearance' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
                 <div>
@@ -848,6 +848,39 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         />
                         <span style={{ fontSize: 13, width: 32, textAlign: 'right', color: 'var(--text-1)' }}>{terminalFontSize}px</span>
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── 终端颜色主题 ── */}
+                <div>
+                  <h3 style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 12, fontWeight: 600 }}>终端颜色主题</h3>
+                  <div className="form-group" style={{ background: 'var(--bg-2)', padding: 16, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                    <div style={{ color: 'var(--text-4)', fontSize: 11, marginBottom: 12 }}>选择终端的配色风格，即时生效</div>
+                    <div className="theme-palette-grid">
+                      {[
+                        { key: 'aether',      name: 'Aether Default', swatches: ['#22c55e', '#58a6ff', '#bc8cff', '#ff7b72'] },
+                        { key: 'tokyo-night', name: 'Tokyo Night',    swatches: ['#7aa2f7', '#bb9af7', '#73daca', '#f7768e'] },
+                        { key: 'catppuccin',  name: 'Catppuccin',     swatches: ['#cba6f7', '#89b4fa', '#a6e3a1', '#f38ba8'] },
+                        { key: 'dracula',     name: 'Dracula',        swatches: ['#ff79c6', '#bd93f9', '#50fa7b', '#ff5555'] },
+                      ].map(({ key, name, swatches }) => (
+                        <div
+                          key={key}
+                          className={`theme-palette-card${terminalColorTheme === key ? ' active' : ''}`}
+                          onClick={() => {
+                            setTerminalColorTheme(key);
+                            localStorage.setItem('terminalColorTheme', key);
+                            window.dispatchEvent(new CustomEvent('terminal-theme-changed', { detail: key }));
+                          }}
+                        >
+                          <div className="theme-palette-swatches">
+                            {swatches.map((c, i) => (
+                              <div key={i} className="theme-palette-swatch" style={{ background: c }} />
+                            ))}
+                          </div>
+                          <div className="theme-palette-name">{name}</div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>

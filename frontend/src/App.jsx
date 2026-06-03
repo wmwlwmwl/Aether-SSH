@@ -12,6 +12,7 @@ import CommandHistory from './components/CommandHistory.jsx';
 import GlobalDialog from './components/GlobalDialog.jsx';
 import { useTranslation } from './i18n.js';
 import { APP_VERSION } from './config.js';
+import { Settings, House, Key, Minus, Square, X, RefreshCw, Wifi, Monitor } from 'lucide-react';
 
 import logoImg from './assets/logo.png';
 
@@ -631,10 +632,10 @@ export default function App() {
               <button 
                 className="btn btn-ghost btn-sm no-drag" 
                 onClick={() => setActiveSessionId(null)} 
-                style={{ marginRight: 8, height: '26px', display: 'flex', alignItems: 'center' }}
+                style={{ marginRight: 8, height: '26px', display: 'flex', alignItems: 'center', gap: 4 }}
                 title="返回主页"
               >
-                🏠
+                <House size={14} />
               </button>
               {sessions.map((s) => (
                 <div
@@ -683,12 +684,12 @@ export default function App() {
           {sessions.length === 0 && <div style={{ flex: 1 }}></div>}
 
           <div className="window-controls">
-            <button className="btn btn-ghost btn-icon no-drag" onClick={() => setShowSettings(true)} title="设置" style={{ fontSize: '18px' }}>⚙️</button>
+            <button className="btn btn-ghost btn-icon no-drag" onClick={() => setShowSettings(true)} title="设置" style={{ display: 'flex', alignItems: 'center' }}><Settings size={16} /></button>
             
             <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 8px' }}></div>
             
-            <button className="btn btn-ghost btn-icon no-drag" onClick={WindowMinimise}>—</button>
-            <button className="btn btn-ghost btn-icon no-drag" onClick={WindowToggleMaximise}>◻</button>
+            <button className="btn btn-ghost btn-icon no-drag" onClick={WindowMinimise} title="最小化" style={{ display: 'flex', alignItems: 'center' }}><Minus size={14} /></button>
+            <button className="btn btn-ghost btn-icon no-drag" onClick={WindowToggleMaximise} title="最大化" style={{ display: 'flex', alignItems: 'center' }}><Square size={14} /></button>
             <button
               className="btn btn-ghost btn-icon no-drag"
               title="最小化到托盘"
@@ -696,7 +697,7 @@ export default function App() {
                 WindowHide();
                 setShowTrayPanel(false);
               }}
-            >✕</button>
+            ><X size={14} /></button>
           </div>
         </div>
       </div>
@@ -1073,7 +1074,7 @@ export default function App() {
           <div className="modal modal-xl" style={{ display: 'flex', flexDirection: 'column', height: '70vh', background: 'var(--bg-1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                🔑 SSH 密钥管理
+                <Key size={16} /> SSH 密钥管理
               </div>
               <button className="btn btn-ghost btn-icon" onClick={() => setShowKeys(false)} style={{ color: 'var(--text-3)' }}>✕</button>
             </div>
@@ -1091,7 +1092,7 @@ export default function App() {
                     border: i === 0 ? '1px solid rgba(16,185,129,0.3)' : '1px solid var(--border)',
                     cursor: 'pointer',
                   }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🔑</div>
+                    <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Key size={18} style={{ color: '#10b981' }} /></div>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', fontFamily: 'var(--font-mono)' }}>{key.path}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>Type {key.type}</div>
@@ -1156,8 +1157,7 @@ export default function App() {
                 width: 42, height: 42, borderRadius: 10, flexShrink: 0,
                 background: 'linear-gradient(135deg,#ef4444,#dc2626)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 22,
-              }}>🖥</div>
+              }}><Monitor size={22} style={{ color: '#fff' }} /></div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: '#f0f6fc', marginBottom: 3 }}>
                   {connectingServer.server.name || connectingServer.server.host}

@@ -3,39 +3,81 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { AttachAddon } from '@xterm/addon-attach';
+import { Copy, Clipboard, Trash2, CheckSquare, MoreHorizontal } from 'lucide-react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import '@xterm/xterm/css/xterm.css';
 import defaultTermBg from '../assets/term_bg.png';
 
-// 参考 Netcatty / iTerm2 风格：深色带微蓝绿底色
-const XTERM_THEME = {
-  background:        '#00000000',
-  foreground:        '#cdd9e5',
-  cursor:            '#22c55e',
-  cursorAccent:      '#0d1117',
-  selectionBackground: 'rgba(34, 197, 94, 0.20)',
-  black:             '#484f58',
-  red:               '#ff7b72',
-  green:             '#3fb950',
-  yellow:            '#d29922',
-  blue:              '#58a6ff',
-  magenta:           '#bc8cff',
-  cyan:              '#39c5cf',
-  white:             '#b1bac4',
-  brightBlack:       '#6e7681',
-  brightRed:         '#ffa198',
-  brightGreen:       '#56d364',
-  brightYellow:      '#e3b341',
-  brightBlue:        '#79c0ff',
-  brightMagenta:     '#d2a8ff',
-  brightCyan:        '#56d4dd',
-  brightWhite:       '#f0f6fc',
+// ── 多套终端主题定义 ──────────────────────────────────────────────
+const TERMINAL_THEMES = {
+  'aether': {
+    name: 'Aether Default',
+    swatches: ['#22c55e', '#58a6ff', '#bc8cff', '#0d1117'],
+    theme: {
+      background: '#00000000', foreground: '#cdd9e5', cursor: '#22c55e',
+      cursorAccent: '#0d1117', selectionBackground: 'rgba(34,197,94,0.20)',
+      black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
+      blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4',
+      brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
+      brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
+      brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
+    },
+  },
+  'tokyo-night': {
+    name: 'Tokyo Night',
+    swatches: ['#7aa2f7', '#bb9af7', '#73daca', '#1a1b26'],
+    theme: {
+      background: '#00000000', foreground: '#a9b1d6', cursor: '#7aa2f7',
+      cursorAccent: '#1a1b26', selectionBackground: 'rgba(122,162,247,0.20)',
+      black: '#32344a', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68',
+      blue: '#7aa2f7', magenta: '#ad8ee6', cyan: '#449dab', white: '#787c99',
+      brightBlack: '#444b6a', brightRed: '#ff7a93', brightGreen: '#b9f27c',
+      brightYellow: '#ff9e64', brightBlue: '#7da6ff', brightMagenta: '#bb9af7',
+      brightCyan: '#0db9d7', brightWhite: '#acb0d0',
+    },
+  },
+  'catppuccin': {
+    name: 'Catppuccin',
+    swatches: ['#cba6f7', '#89b4fa', '#a6e3a1', '#1e1e2e'],
+    theme: {
+      background: '#00000000', foreground: '#cdd6f4', cursor: '#f5c2e7',
+      cursorAccent: '#1e1e2e', selectionBackground: 'rgba(203,166,247,0.20)',
+      black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af',
+      blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
+      brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1',
+      brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#f5c2e7',
+      brightCyan: '#94e2d5', brightWhite: '#a6adc8',
+    },
+  },
+  'dracula': {
+    name: 'Dracula',
+    swatches: ['#ff79c6', '#bd93f9', '#50fa7b', '#282a36'],
+    theme: {
+      background: '#00000000', foreground: '#f8f8f2', cursor: '#f8f8f2',
+      cursorAccent: '#282a36', selectionBackground: 'rgba(189,147,249,0.25)',
+      black: '#21222c', red: '#ff5555', green: '#50fa7b', yellow: '#f1fa8c',
+      blue: '#bd93f9', magenta: '#ff79c6', cyan: '#8be9fd', white: '#f8f8f2',
+      brightBlack: '#6272a4', brightRed: '#ff6e6e', brightGreen: '#69ff94',
+      brightYellow: '#ffffa5', brightBlue: '#d6acff', brightMagenta: '#ff92df',
+      brightCyan: '#a4ffff', brightWhite: '#ffffff',
+    },
+  },
 };
 
+// 根据 localStorage 获取当前主题
+function getXtermTheme() {
+  const key = localStorage.getItem('terminalColorTheme') || 'aether';
+  return (TERMINAL_THEMES[key] || TERMINAL_THEMES['aether']).theme;
+}
+
 export default function Terminal({ sessionId, status, isActive, serverName }) {
-  const containerRef = useRef(null);
-  const termRef      = useRef(null);
-  const fitAddonRef  = useRef(null);
+  const containerRef   = useRef(null);
+  const termRef        = useRef(null);
+  const fitAddonRef    = useRef(null);
+  const wsRef          = useRef(null);
+  const [contextMenu, setContextMenu]         = useState(null);
+  const [contextHasSelection, setContextHasSelection] = useState(false);
+  const [justConnected, setJustConnected]     = useState(false);
 
   // ── 初始化 xterm + WebSocket 终端通道 ────────────────────────────────
   // xterm.js 通过 AttachAddon + WebSocket 直接连到本地 Go WebSocket 服务器
@@ -48,7 +90,7 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
     const fontSize = parseInt(localStorage.getItem('terminalFontSize') || '13', 10);
 
     const term = new XTerm({
-      theme:            XTERM_THEME,
+      theme:            getXtermTheme(),
       fontFamily:       "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       fontSize:         fontSize,
       lineHeight:       1.22,
@@ -89,8 +131,6 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
     }, 100);
 
     // ── 自定义快捷键 ──────────────────────────────────────────────
-    // websocket ref 用于粘贴／快捷键直接发送
-    const wsRef = { current: null };
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
@@ -400,19 +440,89 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
     return () => window.removeEventListener('terminal-bg-changed', handleBgChange);
   }, []);
 
+  // 监听终端颜色主题切换，即时更新 xterm 主题
+  useEffect(() => {
+    const handleThemeChange = () => {
+      if (termRef.current) {
+        termRef.current.options.theme = getXtermTheme();
+      }
+    };
+    window.addEventListener('terminal-theme-changed', handleThemeChange);
+    return () => window.removeEventListener('terminal-theme-changed', handleThemeChange);
+  }, []);
+
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    const hasSelection = !!(termRef.current && termRef.current.getSelection());
+    setContextHasSelection(hasSelection);
+    // 边界检测：防止菜单溢出屏幕
+    const menuW = 190;
+    const menuH = 140;
+    const x = e.clientX + menuW > window.innerWidth  ? e.clientX - menuW : e.clientX;
+    const y = e.clientY + menuH > window.innerHeight ? e.clientY - menuH : e.clientY;
+    setContextMenu({ x, y });
+  };
+
+  const closeContextMenu = () => {
+    if (contextMenu) setContextMenu(null);
+  };
+
+  const handleMenuAction = (action) => {
+    closeContextMenu();
+    if (!termRef.current) return;
+    switch (action) {
+      case 'copy': {
+        const selectedText = termRef.current.getSelection();
+        if (selectedText) {
+          navigator.clipboard.writeText(selectedText);
+          termRef.current.clearSelection();
+        }
+        break;
+      }
+      case 'paste':
+        navigator.clipboard.readText().then(text => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(new TextEncoder().encode(text));
+          }
+        }).catch(err => console.error('Failed to read clipboard:', err));
+        break;
+      case 'clear':
+        termRef.current.clear();
+        break;
+      case 'selectAll':
+        termRef.current.selectAll();
+        break;
+      default:
+        break;
+    }
+  };
+
   const isConnected  = status === 'connected';
   const isConnecting = status === 'connecting';
   const isError      = status === 'error';
 
+  // 连接成功时触发一次性涟漪动画
+  useEffect(() => {
+    if (isConnected) {
+      setJustConnected(true);
+      const t = setTimeout(() => setJustConnected(false), 1400);
+      return () => clearTimeout(t);
+    }
+  }, [isConnected]);
+
   return (
-    <div style={{
-      position: 'relative',
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      background: '#0d1117', // Fallback color
-      overflow: 'hidden',
-    }}>
+    <div 
+      onContextMenu={handleContextMenu}
+      onClick={closeContextMenu}
+      style={{
+        position: 'relative',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#0d1117', // Fallback color
+        overflow: 'hidden',
+      }}
+    >
       {/* 底层壁纸 */}
       <div style={{
         position: 'absolute',
@@ -441,21 +551,14 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         userSelect: 'none',
         flexShrink: 0,
       }}>
-        {/* 状态指示灯 */}
-        <div style={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          background: isConnected  ? '#22c55e'
-                    : isConnecting ? '#f59e0b'
-                    : isError      ? '#ef4444'
-                    : '#6e7681',
-          boxShadow: isConnected  ? '0 0 6px #22c55e'
-                   : isConnecting ? '0 0 6px #f59e0b'
-                   : isError      ? '0 0 6px #ef4444'
-                   : 'none',
-          flexShrink: 0,
-        }} />
+        {/* 状态指示灯 - 使用全局 CSS 类，连接成功时触发涟漪动画 */}
+        <div className={[
+          'status-dot',
+          isConnected  ? (justConnected ? 'just-connected' : 'online') : '',
+          isConnecting ? 'connecting' : '',
+          isError      ? 'offline' : '',
+          !isConnected && !isConnecting && !isError ? 'offline' : '',
+        ].filter(Boolean).join(' ')} style={{ flexShrink: 0 }} />
         <span style={{ color: '#cdd9e5', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>
           {serverName || 'Terminal'}
         </span>
@@ -510,6 +613,51 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         }}
       />
       </div>
+
+      {/* ── 右键上下文菜单（增强版：图标 + 边界检测 + disabled 状态） ── */}
+      {contextMenu && (
+        <div
+          className="context-menu"
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            backgroundColor: '#161b22',
+            border: '1px solid rgba(48,54,61,0.9)',
+            borderRadius: '8px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
+            zIndex: 9999,
+            padding: '4px 0',
+            minWidth: '190px',
+            fontFamily: 'var(--font-ui)',
+          }}
+        >
+          {[
+            { icon: <Copy size={13} />, label: '复制', action: 'copy', shortcut: 'Ctrl+C', disabled: !contextHasSelection },
+            { icon: <Clipboard size={13} />, label: '粘贴', action: 'paste', shortcut: 'Ctrl+V' },
+            { type: 'separator' },
+            { icon: <CheckSquare size={13} />, label: '全选', action: 'selectAll' },
+            { icon: <Trash2 size={13} />, label: '清空屏幕', action: 'clear', shortcut: 'Ctrl+L' },
+          ].map((item, idx) =>
+            item.type === 'separator' ? (
+              <div key={idx} className="context-menu-separator" />
+            ) : (
+              <div
+                key={idx}
+                className={`context-menu-item${item.disabled ? ' disabled' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!item.disabled) handleMenuAction(item.action);
+                }}
+              >
+                <span className="item-icon">{item.icon}</span>
+                <span className="item-label">{item.label}</span>
+                {item.shortcut && <span className="item-shortcut">{item.shortcut}</span>}
+              </div>
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 }

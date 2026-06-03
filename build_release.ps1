@@ -32,15 +32,20 @@ if ([string]::IsNullOrEmpty($exePath) -or -Not (Test-Path -Path $exePath)) {
 
 Write-Host "[3/3] Archiving setup installer..." -ForegroundColor Yellow
 $outputDir = "C:\Users\Angus\Desktop\Antigravity\SSH\exe"
+$portableOutputDir = "C:\Users\Angus\Desktop\Antigravity\SSH\Portable"
+
 if (-Not (Test-Path -Path $outputDir)) {
     New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+}
+if (-Not (Test-Path -Path $portableOutputDir)) {
+    New-Item -ItemType Directory -Force -Path $portableOutputDir | Out-Null
 }
 
 $destPath = Join-Path -Path $outputDir -ChildPath "Aether_Setup_$Version.exe"
 Copy-Item -Path $exePath -Destination $destPath -Force
 
 $portableSource = Join-Path -Path $scriptPath -ChildPath "build\bin\Aether.exe"
-$portableDest = Join-Path -Path $outputDir -ChildPath "Aether_Portable_$Version.exe"
+$portableDest = Join-Path -Path $portableOutputDir -ChildPath "Aether_Portable_$Version.exe"
 if (Test-Path -Path $portableSource) {
     Copy-Item -Path $portableSource -Destination $portableDest -Force
     Write-Host "  Portable version saved to: $portableDest" -ForegroundColor Green
