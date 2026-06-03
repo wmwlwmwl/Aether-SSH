@@ -18,7 +18,11 @@ export function DownloadFile(arg1:string,arg2:string):Promise<void>;
 
 export function GetConnections():Promise<Array<main.Connection>>;
 
+export function GetTerminalCwd(arg1:string):Promise<string>;
+
 export function GetWebdavConfig():Promise<Record<string, string>>;
+
+export function GetWsPort():Promise<number>;
 
 export function IsPortableVersion():Promise<boolean>;
 
@@ -57,3 +61,5 @@ export function UploadFile(arg1:string,arg2:string):Promise<void>;
 export function WriteFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function WriteTerminal(arg1:string,arg2:string):Promise<void>;
+
+export function WriteWsOutput(arg1:string,arg2:Array<number>):Promise<void>;

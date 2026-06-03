@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -20,6 +23,9 @@ type App struct {
 	ctx           context.Context
 	sshManager    *SSHManager
 	configManager *ConfigManager
+	wsPort        int
+	wsMu          sync.Mutex
+	wsConns       map[string]*websocket.Conn // sessionId -> active WebSocket
 }
 
 // NewApp creates a new App application struct
@@ -27,6 +33,7 @@ func NewApp() *App {
 	return &App{
 		sshManager:    NewSSHManager(),
 		configManager: NewConfigManager(),
+		wsConns:       make(map[string]*websocket.Conn),
 	}
 }
 
@@ -35,6 +42,57 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.sshManager.ctx = ctx // Give SSH manager access to Wails events
+	a.sshManager.app = a  // Give SSH manager access to WebSocket registry
+
+	// ── 启动本地 WebSocket 终端服务器 ─────────────────────────────────
+	// 不经过 Wails IPC，直接走 TCP loopback，延迟极低
+	mux := http.NewServeMux()
+	// 允许任何来源（WebView2 内部请求可能没有 Origin 头）
+	upgrader := websocket.Upgrader{
+		CheckOrigin:     func(r *http.Request) bool { return true },
+		ReadBufferSize:  4096,
+		WriteBufferSize: 32768,
+	}
+	mux.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
+		sessionId := strings.TrimPrefix(r.URL.Path, "/ws/")
+		if sessionId == "" {
+			http.Error(w, "missing sessionId", http.StatusBadRequest)
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// 注册当前 WebSocket 连接
+		a.wsMu.Lock()
+		a.wsConns[sessionId] = conn
+		a.wsMu.Unlock()
+		defer func() {
+			a.wsMu.Lock()
+			delete(a.wsConns, sessionId)
+			a.wsMu.Unlock()
+		}()
+
+		// 读取 WebSocket 消息，直通 SSH stdin
+		for {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				break
+			}
+			a.sshManager.WriteBytes(sessionId, msg)
+		}
+	})
+
+	// 监听随机端口
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err == nil {
+		a.wsPort = listener.Addr().(*net.TCPAddr).Port
+		go func() {
+			_ = http.Serve(listener, mux)
+		}()
+	}
 
 	// Clean up old executable from a previous auto-update
 	exePath, err := os.Executable()
@@ -48,6 +106,21 @@ func (a *App) startup(ctx context.Context) {
 				}
 			}
 		}
+	}
+}
+
+// GetWsPort 返回本地 WebSocket 服务器端口，前端用于连接终端
+func (a *App) GetWsPort() int {
+	return a.wsPort
+}
+
+// WriteWsToSession 将 WebSocket 输出写入给指定 session 的 WS 连接
+func (a *App) WriteWsOutput(sessionId string, data []byte) {
+	a.wsMu.Lock()
+	conn, ok := a.wsConns[sessionId]
+	a.wsMu.Unlock()
+	if ok {
+		_ = conn.WriteMessage(websocket.BinaryMessage, data)
 	}
 }
 
@@ -90,9 +163,9 @@ func (a *App) DisconnectSSH(sessionId string) {
 	a.sshManager.Disconnect(sessionId)
 }
 
-// WriteTerminal sends input to the SSH PTY
+// WriteTerminal sends input to the SSH PTY (fallback, primary path is WebSocket)
 func (a *App) WriteTerminal(sessionId string, data string) {
-	a.sshManager.Write(sessionId, data)
+	a.sshManager.WriteBytes(sessionId, []byte(data))
 }
 
 // ResizeTerminal resizes the SSH PTY
@@ -103,6 +176,11 @@ func (a *App) ResizeTerminal(sessionId string, cols, rows int) {
 // SystemInfo retrieves basic system probe info
 func (a *App) SystemInfo(sessionId string) (map[string]interface{}, error) {
 	return a.sshManager.GetSystemInfo(sessionId)
+}
+
+// GetTerminalCwd retrieves current working directory of the shell
+func (a *App) GetTerminalCwd(sessionId string) (string, error) {
+	return a.sshManager.GetTerminalCwd(sessionId)
 }
 
 // ListDir lists directory contents via SFTP

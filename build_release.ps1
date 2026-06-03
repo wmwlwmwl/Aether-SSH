@@ -39,6 +39,36 @@ if (-Not (Test-Path -Path $outputDir)) {
 $destPath = Join-Path -Path $outputDir -ChildPath "Aether_Setup_$Version.exe"
 Copy-Item -Path $exePath -Destination $destPath -Force
 
+$portableSource = Join-Path -Path $scriptPath -ChildPath "build\bin\Aether.exe"
+$portableDest = Join-Path -Path $outputDir -ChildPath "Aether_Portable_$Version.exe"
+if (Test-Path -Path $portableSource) {
+    Copy-Item -Path $portableSource -Destination $portableDest -Force
+    Write-Host "  Portable version saved to: $portableDest" -ForegroundColor Green
+}
+
+# ── [4/4] 自动生成版本更新总结 (Changelog) ───────────────────
+Write-Host "[4/4] Generating release changelog..." -ForegroundColor Yellow
+$changeLogPath = "C:\Users\Angus\Desktop\Antigravity\SSH\CHANGELOG.md"
+$gitLogs = git log -n 15 --oneline --pretty=format:"* %s (%h)" 2>$null
+
+$changelogContent = @"
+# AetherSSH 发布日志 - $Version
+更新时间: $((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))
+
+## 🛠 最近代码变更记录 (Git Commits)
+$gitLogs
+
+"@
+
+if (Test-Path $changeLogPath) {
+    $existing = Get-Content $changeLogPath -Raw
+    $newContent = $changelogContent + "`n`n" + $existing
+    Set-Content -Path $changeLogPath -Value $newContent -Force
+} else {
+    Set-Content -Path $changeLogPath -Value $changelogContent -Force
+}
+Write-Host "Changelog successfully updated at: $changeLogPath" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Green
 Write-Host "  SUCCESS!" -ForegroundColor Green

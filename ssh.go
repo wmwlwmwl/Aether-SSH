@@ -30,6 +30,7 @@ type SessionData struct {
 
 type SSHManager struct {
 	ctx           context.Context
+	app           *App // reference to App for WebSocket output delivery
 	sessions      map[string]*SessionData
 	probeDeployed map[string]bool // tracks which sessions have probe.sh deployed
 	mu            sync.Mutex
@@ -181,84 +182,47 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 		Stdin:   stdin,
 	}
 
-	// Start reading stdout/stderr
+	// 启动读取 stdout/stderr
 	go m.pipeOutput(sessionId, stdout)
 	go m.pipeOutput(sessionId, stderr)
+
+	// 启动后台连接意外断开监控协程
+	go func() {
+		_ = client.Wait()
+		// 检测是否已被主动移除，若未被移除，说明是意外断开
+		m.mu.Lock()
+		_, exists := m.sessions[sessionId]
+		m.mu.Unlock()
+		if exists {
+			m.CloseSessionResources(sessionId)
+			if m.ctx != nil {
+				runtime.EventsEmit(m.ctx, "ssh-disconnected", sessionId)
+			}
+		}
+	}()
 
 	return nil
 }
 
 func (m *SSHManager) pipeOutput(sessionId string, r io.Reader) {
 	buf := make([]byte, 32768)
-	dataChan := make(chan []byte, 1024)
 
-	// 无阻塞读取流
-	go func() {
-		for {
-			n, err := r.Read(buf)
-			if n > 0 {
-				b := make([]byte, n)
-				copy(b, buf[:n])
-				dataChan <- b
-			}
-			if err != nil {
-				close(dataChan)
-				break
+	// 直接读取并通过 WebSocket 发送，不再批处理缓冲
+	// WebSocket 过 TCP loopback 延迟极低，无需批处理
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			data := make([]byte, n)
+			copy(data, buf[:n])
+			if m.app != nil {
+				m.app.WriteWsOutput(sessionId, data)
+			} else if m.ctx != nil {
+				// fallback: WebSocket 未初始化时用 Events
+				runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(data))
 			}
 		}
-	}()
-
-	var batch []byte
-	timer := time.NewTimer(0)
-	<-timer.C // init stopped
-	cooldown := false
-	cooldownDuration := 15 * time.Millisecond
-
-	for {
-		select {
-		case b, ok := <-dataChan:
-			if !ok {
-				if len(batch) > 0 && m.ctx != nil {
-					runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(batch))
-				}
-				return
-			}
-			
-			if !cooldown {
-				// 首包零延迟直通！极速回显！
-				if m.ctx != nil {
-					runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(b))
-				}
-				// 启动冷却期，后续15ms内到达的数据将暂时被聚合
-				cooldown = true
-				timer.Reset(cooldownDuration)
-			} else {
-				// 冷却期内，累积数据
-				batch = append(batch, b...)
-				if len(batch) >= 32768 {
-					if m.ctx != nil {
-						runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(batch))
-					}
-					batch = batch[:0]
-					if !timer.Stop() {
-						select { case <-timer.C: default: }
-					}
-					timer.Reset(cooldownDuration)
-				}
-			}
-		case <-timer.C:
-			// 冷却期结束，如果有积压数据，一次性发出
-			if len(batch) > 0 {
-				if m.ctx != nil {
-					runtime.EventsEmit(m.ctx, "terminal-data-"+sessionId, string(batch))
-				}
-				batch = batch[:0]
-				// 继续冷却，因为流量还在持续
-				timer.Reset(cooldownDuration)
-			} else {
-				// 流量停止，解除冷却
-				cooldown = false
-			}
+		if err != nil {
+			return
 		}
 	}
 }
@@ -267,6 +231,10 @@ func (m *SSHManager) Disconnect(sessionId string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s, ok := m.sessions[sessionId]; ok {
+		// 清理异步输入事件监听
+		if m.ctx != nil {
+			runtime.EventsOff(m.ctx, "terminal-input-"+sessionId)
+		}
 		s.Stdin.Close()
 		s.Session.Close()
 		s.SFTP.Close()
@@ -275,12 +243,60 @@ func (m *SSHManager) Disconnect(sessionId string) {
 	}
 }
 
-func (m *SSHManager) Write(sessionId string, data string) {
+func (m *SSHManager) CloseSessionResources(sessionId string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// 清理异步输入事件监听
+	if m.ctx != nil {
+		runtime.EventsOff(m.ctx, "terminal-input-"+sessionId)
+	}
+	if s, ok := m.sessions[sessionId]; ok {
+		if s.Stdin != nil { s.Stdin.Close() }
+		if s.Session != nil { s.Session.Close() }
+		if s.SFTP != nil { s.SFTP.Close() }
+		if s.Client != nil { s.Client.Close() }
+	}
+}
+
+func (m *SSHManager) GetTerminalCwd(sessionId string) (string, error) {
 	m.mu.Lock()
 	s, ok := m.sessions[sessionId]
 	m.mu.Unlock()
-	if ok {
-		s.Stdin.Write([]byte(data))
+	if !ok {
+		return "", fmt.Errorf("session not found")
+	}
+
+	if s.Client == nil {
+		return "", fmt.Errorf("client connection is nil")
+	}
+
+	localAddr := s.Client.LocalAddr().String()
+	parts := strings.Split(localAddr, ":")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid local address format")
+	}
+	port := parts[len(parts)-1]
+
+	cmd := fmt.Sprintf(`PORT=%s; SSHD_PID=$(ss -ntp 2>/dev/null | grep ":$PORT " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -n1); [ -z "$SSHD_PID" ] && SSHD_PID=$(netstat -ntp 2>/dev/null | grep ":$PORT " | grep -oE '[0-9]+/sshd' | cut -d/ -f1 | head -n1); if [ -n "$SSHD_PID" ]; then SHELL_PID=$(pgrep -P $SSHD_PID | head -n1); fi; [ -z "$SHELL_PID" ] && SHELL_PID=$(pgrep -u $USER -f "sh|bash|zsh" | tail -n1); if [ -n "$SHELL_PID" ]; then readlink /proc/$SHELL_PID/cwd 2>/dev/null || echo "/"; else echo "/"; fi`, port)
+
+	out, err := m.executeCmd(s, cmd)
+	if err != nil {
+		return "", err
+	}
+	cwd := strings.TrimSpace(out)
+	if cwd == "" {
+		cwd = "/"
+	}
+	return cwd, nil
+}
+
+// WriteBytes sends raw bytes to the SSH PTY stdin (used by WebSocket handler)
+func (m *SSHManager) WriteBytes(sessionId string, data []byte) {
+	m.mu.Lock()
+	s, ok := m.sessions[sessionId]
+	m.mu.Unlock()
+	if ok && s.Stdin != nil {
+		_, _ = s.Stdin.Write(data)
 	}
 }
 

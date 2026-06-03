@@ -34,8 +34,16 @@ export function GetConnections() {
   return window['go']['main']['App']['GetConnections']();
 }
 
+export function GetTerminalCwd(arg1) {
+  return window['go']['main']['App']['GetTerminalCwd'](arg1);
+}
+
 export function GetWebdavConfig() {
   return window['go']['main']['App']['GetWebdavConfig']();
+}
+
+export function GetWsPort() {
+  return window['go']['main']['App']['GetWsPort']();
 }
 
 export function IsPortableVersion() {
@@ -112,4 +120,8 @@ export function WriteFile(arg1, arg2, arg3) {
 
 export function WriteTerminal(arg1, arg2) {
   return window['go']['main']['App']['WriteTerminal'](arg1, arg2);
+}
+
+export function WriteWsOutput(arg1, arg2) {
+  return window['go']['main']['App']['WriteWsOutput'](arg1, arg2);
 }

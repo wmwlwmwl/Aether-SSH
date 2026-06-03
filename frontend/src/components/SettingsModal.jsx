@@ -275,11 +275,15 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
     paste: 'Ctrl+V',
     clear: 'Ctrl+L',
     newTab: 'Ctrl+T',
+    sigint: 'Ctrl+C',
+    eof: 'Ctrl+D',
+    suspend: 'Ctrl+Z',
+    clearLine: 'Ctrl+U',
   };
   const [shortcuts, setShortcuts] = useState(() => {
     try {
       const saved = localStorage.getItem('appShortcuts');
-      return saved ? JSON.parse(saved) : defaultShortcuts;
+      return saved ? { ...defaultShortcuts, ...JSON.parse(saved) } : defaultShortcuts;
     } catch {
       return defaultShortcuts;
     }
@@ -416,6 +420,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
             ...f,
             url: data.url || f.url,
             username: data.username || '',
+            password: data.password || '',
             remotePath: data.remotePath || f.remotePath,
           }));
           if (data.username) {
@@ -1002,7 +1007,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                       </button>
                     </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ color: 'var(--text-2)', fontSize: 13 }}>新建本地标签页</span>
                       <button 
                         onClick={() => setListeningKey('newTab')} 
@@ -1015,6 +1020,70 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         }}
                       >
                         {listeningKey === 'newTab' ? '请按下快捷键...' : shortcuts.newTab}
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ color: 'var(--text-2)', fontSize: 13 }}>打断当前指令 (SIGINT)</span>
+                      <button 
+                        onClick={() => setListeningKey('sigint')} 
+                        style={{ 
+                          fontFamily: 'var(--font-mono)', fontSize: 12, 
+                          color: listeningKey === 'sigint' ? 'var(--green)' : 'var(--text-4)', 
+                          background: 'var(--bg-1)', padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
+                          border: listeningKey === 'sigint' ? '1px solid var(--green)' : '1px solid var(--border)',
+                          transition: 'var(--transition)'
+                        }}
+                      >
+                        {listeningKey === 'sigint' ? '请按下快捷键...' : shortcuts.sigint}
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ color: 'var(--text-2)', fontSize: 13 }}>结束终端会话 (EOF)</span>
+                      <button 
+                        onClick={() => setListeningKey('eof')} 
+                        style={{ 
+                          fontFamily: 'var(--font-mono)', fontSize: 12, 
+                          color: listeningKey === 'eof' ? 'var(--green)' : 'var(--text-4)', 
+                          background: 'var(--bg-1)', padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
+                          border: listeningKey === 'eof' ? '1px solid var(--green)' : '1px solid var(--border)',
+                          transition: 'var(--transition)'
+                        }}
+                      >
+                        {listeningKey === 'eof' ? '请按下快捷键...' : shortcuts.eof}
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ color: 'var(--text-2)', fontSize: 13 }}>后台挂起进程 (SIGTSTP)</span>
+                      <button 
+                        onClick={() => setListeningKey('suspend')} 
+                        style={{ 
+                          fontFamily: 'var(--font-mono)', fontSize: 12, 
+                          color: listeningKey === 'suspend' ? 'var(--green)' : 'var(--text-4)', 
+                          background: 'var(--bg-1)', padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
+                          border: listeningKey === 'suspend' ? '1px solid var(--green)' : '1px solid var(--border)',
+                          transition: 'var(--transition)'
+                        }}
+                      >
+                        {listeningKey === 'suspend' ? '请按下快捷键...' : shortcuts.suspend}
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
+                      <span style={{ color: 'var(--text-2)', fontSize: 13 }}>清空当前输入行</span>
+                      <button 
+                        onClick={() => setListeningKey('clearLine')} 
+                        style={{ 
+                          fontFamily: 'var(--font-mono)', fontSize: 12, 
+                          color: listeningKey === 'clearLine' ? 'var(--green)' : 'var(--text-4)', 
+                          background: 'var(--bg-1)', padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
+                          border: listeningKey === 'clearLine' ? '1px solid var(--green)' : '1px solid var(--border)',
+                          transition: 'var(--transition)'
+                        }}
+                      >
+                        {listeningKey === 'clearLine' ? '请按下快捷键...' : shortcuts.clearLine}
                       </button>
                     </div>
 
@@ -1037,53 +1106,75 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
 
                   {isConfigured && !isEditing ? (
                     <div style={{ 
-                      background: 'var(--bg-1)', 
-                      border: '1px solid var(--border)', 
-                      borderRadius: 'var(--radius-md)', 
-                      padding: '20px 24px',
+                      position: 'relative',
+                      background: 'linear-gradient(135deg, rgba(16,185,129,0.05) 0%, var(--bg-1) 100%)', 
+                      border: '1px solid rgba(16, 185, 129, 0.2)', 
+                      borderRadius: 'var(--radius-lg)', 
+                      padding: '24px',
                       display: 'flex', 
                       flexDirection: 'column', 
-                      gap: 16,
-                      boxShadow: 'var(--shadow-sm)'
+                      gap: 20,
+                      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
+                      overflow: 'hidden'
                     }}>
+                      <div style={{ 
+                        position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', 
+                        background: 'var(--green)',
+                        boxShadow: '0 0 12px var(--green)'
+                      }} />
+                      
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div style={{ 
-                            width: 8, height: 8, 
+                            width: 10, height: 10, 
                             borderRadius: '50%', 
                             background: 'var(--green)',
-                            boxShadow: '0 0 8px var(--green)'
+                            boxShadow: '0 0 10px var(--green)'
                           }}></div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)' }}>已成功绑定 WebDAV 服务</div>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-1)', letterSpacing: '0.3px' }}>已成功绑定 WebDAV 服务</div>
                         </div>
                         <button 
-                          className="btn btn-ghost btn-sm" 
                           onClick={() => setIsEditing(true)}
                           style={{ 
-                            padding: '4px 12px', 
+                            padding: '6px 14px', 
                             borderRadius: 'var(--radius-sm)', 
-                            fontSize: 12,
+                            fontSize: 13,
+                            fontWeight: 500,
+                            background: 'rgba(255,255,255,0.05)',
                             border: '1px solid var(--border)',
-                            color: 'var(--text-2)'
+                            color: 'var(--text-2)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6
                           }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-3)'; e.currentTarget.style.color = 'var(--text-1)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = 'var(--text-2)'; }}
                         >
-                          ✏️ 修改配置
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                          修改配置
                         </button>
                       </div>
 
                       <div style={{ 
                         display: 'grid', 
-                        gridTemplateColumns: '80px 1fr', 
-                        gap: '8px 16px',
-                        fontSize: 13,
-                        color: 'var(--text-3)'
+                        gridTemplateColumns: '1fr 1fr', 
+                        gap: '16px',
+                        marginTop: '4px'
                       }}>
-                        <div>绑定账号</div>
-                        <div style={{ color: 'var(--text-1)', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>{webdavForm.username}</div>
-                        <div>备份目录</div>
-                        <div style={{ color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{webdavForm.remotePath}</div>
-                        <div>服务器</div>
-                        <div style={{ color: 'var(--text-2)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{webdavForm.url}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                          <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>绑定账号</span>
+                          <span style={{ fontSize: 14, color: 'var(--text-1)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{webdavForm.username}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                          <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>备份目录</span>
+                          <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{webdavForm.remotePath}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', gridColumn: '1 / -1' }}>
+                          <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>服务器地址</span>
+                          <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{webdavForm.url}</span>
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -1098,7 +1189,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                       </div>
                       <div className="form-group">
                         <label className="form-label">密码 / 授权码</label>
-                        <input className="input" type="password" value={webdavForm.password} onChange={setWebdav('password')} placeholder="••••••••••••" />
+                        <input className="input" type="password" value={webdavForm.password} onChange={setWebdav('password')} />
                       </div>
                       <div className="form-group">
                         <label className="form-label">远程保存目录</label>

@@ -145,7 +145,42 @@ export default function FileManager({ sessionId, addToast }) {
     }
   }, [sessionId, addToast]);
 
-  useEffect(() => { loadDir('/'); }, [loadDir]);
+  // ── 初始化自动同步最新终端目录 ───────────────────────────
+  useEffect(() => {
+    const initPath = async () => {
+      try {
+        const cwd = await AppGo.GetTerminalCwd(sessionId);
+        if (cwd) {
+          loadDir(cwd);
+          return;
+        }
+      } catch (_) {}
+      loadDir('/');
+    };
+    initPath();
+  }, [sessionId, loadDir]);
+
+  // ── 监听终端内的目录切换事件 ─────────────────────────────
+  useEffect(() => {
+    // 向全局标志位注册订阅，告知 Terminal 组件"文件管理器已挂载，需要 CWD 探测"
+    if (!window.__cwdListeners) window.__cwdListeners = {};
+    window.__cwdListeners[sessionId] = true;
+
+    const handleTerminalCwd = (e) => {
+      if (e.detail && e.detail.sessionId === sessionId) {
+        const newPath = e.detail.cwd;
+        if (newPath && newPath !== currentPath) {
+          loadDir(newPath);
+        }
+      }
+    };
+    window.addEventListener('ssh-terminal-cwd-changed', handleTerminalCwd);
+    return () => {
+      // 注销订阅，文件管理器不可见时不再触发 CWD 探测
+      if (window.__cwdListeners) delete window.__cwdListeners[sessionId];
+      window.removeEventListener('ssh-terminal-cwd-changed', handleTerminalCwd);
+    };
+  }, [sessionId, currentPath, loadDir]);
 
   useEffect(() => {
     const handleProgress = (e) => {

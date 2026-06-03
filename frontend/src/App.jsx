@@ -403,6 +403,69 @@ export default function App() {
     }
   }, []);
 
+  // ── 重连会话核心逻辑 ────────────────────────────────────────
+  const reconnectSession = useCallback(async (session) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === session.id ? { ...s, status: 'connecting' } : s))
+    );
+
+    // 如果是当前激活的会话，展示连接等待卡片
+    const serverObj = servers.find((sv) => sv.id === session.serverId);
+    if (serverObj) {
+      setConnectingServer({ server: serverObj, sessionId: session.id, startTime: Date.now() });
+    }
+
+    try {
+      await AppGo.ConnectSSH(session.id, session.serverId);
+      setSessions((prev) =>
+        prev.map((s) => (s.id === session.id ? { ...s, status: 'connected' } : s))
+      );
+      setConnectingServer(null);
+      addToast('重新连接成功', 'success');
+
+      // 后台重新部署并激活探针状态
+      try {
+        const info = await AppGo.SystemInfo(session.id);
+        if (info) {
+          setSessions((prev) => prev.map((s) => s.id === session.id ? { ...s, osInfo: info } : s));
+          setMonitoringEnabled((prev) => ({ ...prev, [session.id]: true }));
+        }
+      } catch (_) {}
+    } catch (err) {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === session.id ? { ...s, status: 'error' } : s))
+      );
+      setConnectingServer(null);
+      addToast(`重新连接失败: ${err}`, 'error', 5000);
+    }
+  }, [servers, addToast]);
+
+  // ── 监听 SSH 意外断开事件 ────────────────────────────────────
+  useEffect(() => {
+    const unbind = EventsOn('ssh-disconnected', (sessionId) => {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, status: 'closed' } : s))
+      );
+      addToast('SSH 连接已意外断开', 'error', 4000);
+    });
+    return () => {
+      if (unbind) unbind();
+    };
+  }, [addToast]);
+
+  // ── 监听终端触发的重连请求 ──────────────────────────────────
+  useEffect(() => {
+    const handleReconnectTrigger = (e) => {
+      const sessId = e.detail;
+      const sess = sessions.find((s) => s.id === sessId);
+      if (sess) {
+        reconnectSession(sess);
+      }
+    };
+    window.addEventListener('ssh-reconnect-trigger', handleReconnectTrigger);
+    return () => window.removeEventListener('ssh-reconnect-trigger', handleReconnectTrigger);
+  }, [sessions, reconnectSession]);
+
   // ── Connect to server ──────────────────────────────────────
   const connectServer = useCallback(async (server) => {
     const existing = sessions.find((s) => s.serverId === server.id && s.status !== 'closed');
@@ -578,16 +641,40 @@ export default function App() {
                   key={s.id}
                   className={`tab-item no-drag ${activeSessionId === s.id ? 'active' : ''}`}
                   onClick={() => setActiveSessionId(s.id)}
-                  style={{ height: '28px', minHeight: '28px' }}
+                  style={{ height: '28px', minHeight: '28px', display: 'flex', alignItems: 'center', gap: '4px' }}
                 >
-                  <span style={{ fontSize: '10px' }}>
+                  <span style={{ fontSize: '10px', display: 'inline-block', lineHeight: 1 }}>
                     {s.status === 'connecting' ? '🟡' :
                      s.status === 'connected'  ? '🟢' :
-                     s.status === 'error'      ? '🔴' : '⚫'}
+                     s.status === 'error'      ? '🔴' :
+                     s.status === 'closed'     ? '🔴' : '⚫'}
                   </span>
                   <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {s.serverName}
                   </span>
+                  {(s.status === 'closed' || s.status === 'error') && (
+                    <span
+                      className="tab-reconnect no-drag"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        reconnectSession(s);
+                      }}
+                      title="重新连接"
+                      style={{
+                        cursor: 'pointer',
+                        opacity: 0.6,
+                        marginLeft: '2px',
+                        marginRight: '2px',
+                        fontSize: '12px',
+                        transition: 'opacity 0.2s',
+                        userSelect: 'none'
+                      }}
+                      onMouseEnter={(e) => e.target.style.opacity = 1}
+                      onMouseLeave={(e) => e.target.style.opacity = 0.6}
+                    >
+                      ⟳
+                    </span>
+                  )}
                   <span className="tab-close no-drag" onClick={(e) => closeSession(s.id, e)}>✕</span>
                 </div>
               ))}

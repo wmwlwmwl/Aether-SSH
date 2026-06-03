@@ -42,6 +42,7 @@ if not exist "%OUTPUT_DIR%" (
 )
 
 copy /y "%EXE_PATH%" "%OUTPUT_DIR%\Aether_Setup_%VERSION%.exe" >nul
+copy /y "build\bin\Aether.exe" "%OUTPUT_DIR%\Aether_Portable_%VERSION%.exe" >nul
 
 echo.
 echo ==============================================

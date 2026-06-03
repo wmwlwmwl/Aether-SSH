@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,6 +79,18 @@ func (c *ConfigManager) encrypt(text string) string {
 		return ""
 	}
 	block, _ := aes.NewCipher(c.key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := make([]byte, gcm.NonceSize())
+	io.ReadFull(rand.Reader, nonce)
+	ciphertext := gcm.Seal(nonce, nonce, []byte(text), nil)
+	return fmt.Sprintf("%x", ciphertext)
+}
+
+func (c *ConfigManager) encryptWithKey(text string, key []byte) string {
+	if text == "" {
+		return ""
+	}
+	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
 	nonce := make([]byte, gcm.NonceSize())
 	io.ReadFull(rand.Reader, nonce)
@@ -163,6 +176,7 @@ func (c *ConfigManager) SaveConnection(conn Connection) Connection {
 	}
 
 	c.saveConnectionsFile(conns)
+	go c.BackupToWebdav()
 	return conn
 }
 
@@ -186,6 +200,7 @@ func (c *ConfigManager) DeleteConnection(id string) bool {
 		}
 	}
 	c.saveConnectionsFile(filtered)
+	go c.BackupToWebdav()
 	return true
 }
 
@@ -212,11 +227,28 @@ func (c *ConfigManager) GetWebdavConfig() map[string]string {
 	}
 }
 
+func (c *ConfigManager) getWebdavKey() []byte {
+	confMap := c.GetWebdavConfig()
+	if confMap == nil || confMap["url"] == "" {
+		return c.key
+	}
+	hash := sha256.Sum256([]byte(confMap["url"] + confMap["username"] + confMap["password"]))
+	return hash[:]
+}
+
 func (c *ConfigManager) SaveWebdavConfig(config map[string]string) error {
+	pass := config["password"]
+	if pass == "" {
+		existing := c.GetWebdavConfig()
+		if existing != nil && existing["password"] != "" {
+			pass = existing["password"]
+		}
+	}
+
 	conf := WebdavConfig{
 		Url:        config["url"],
 		Username:   c.encrypt(config["username"]),
-		Password:   c.encrypt(config["password"]),
+		Password:   c.encrypt(pass),
 		RemotePath: config["remotePath"],
 	}
 	if conf.RemotePath == "" {
@@ -248,7 +280,8 @@ func (c *ConfigManager) BackupToWebdav() (map[string]interface{}, error) {
 
 	conns := c.GetConnections()
 	data, _ := json.MarshalIndent(conns, "", "  ")
-	encryptedData := c.encrypt(string(data))
+	key := c.getWebdavKey()
+	encryptedData := c.encryptWithKey(string(data), key)
 
 	timestamp := time.Now().Format("20060102_150405")
 	fileName := fmt.Sprintf("connections_backup_%s.enc", timestamp)
@@ -303,10 +336,15 @@ func (c *ConfigManager) RestoreFromWebdavFile(filename string) (map[string]inter
 		return nil, err
 	}
 
-	decrypted := c.decrypt(string(data))
+	key := c.getWebdavKey()
+	decrypted := c.decryptWithKey(string(data), key)
 
 	if decrypted == "" {
-		return nil, fmt.Errorf("解密失败：备份文件可能已损坏，或者密钥不匹配")
+		// 降级尝试使用本地旧密钥解密（兼容老版本备份）
+		decrypted = c.decryptWithKey(string(data), c.key)
+		if decrypted == "" {
+			return nil, fmt.Errorf("解密失败：如果这是旧版本产生的备份，且您之前卸载清理了本地缓存(aether.key)，则受 AES-256 高强加密保护，资料已永久无法恢复。")
+		}
 	}
 
 	var conns []Connection

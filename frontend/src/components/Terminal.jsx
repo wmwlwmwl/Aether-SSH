@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CanvasAddon } from '@xterm/addon-canvas';
-import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime.js';
+import { WebglAddon } from '@xterm/addon-webgl';
+import { AttachAddon } from '@xterm/addon-attach';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import '@xterm/xterm/css/xterm.css';
 import defaultTermBg from '../assets/term_bg.png';
@@ -37,7 +37,9 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
   const termRef      = useRef(null);
   const fitAddonRef  = useRef(null);
 
-  // ── 初始化 xterm ────────────────────────────────────────────────
+  // ── 初始化 xterm + WebSocket 终端通道 ────────────────────────────────
+  // xterm.js 通过 AttachAddon + WebSocket 直接连到本地 Go WebSocket 服务器
+  // 完全绕开 Wails IPC跨进程通信，走 TCP loopback 延迟极低
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -49,41 +51,58 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
       theme:            XTERM_THEME,
       fontFamily:       "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       fontSize:         fontSize,
-      lineHeight:       1.22,     // 1.22 紧凑行高，让文字排版密度适中，光标自动缩短并与字符等高，精致高级
+      lineHeight:       1.22,
       letterSpacing:    0.3,
       cursorBlink:      true,
       cursorStyle:      'bar',
-      cursorWidth:      1,        // 调整为 1 像素极致纤细光标
+      cursorWidth:      1,
       scrollback:       5000,
       allowTransparency: true,
-      allowProposedApi: true,
+      fastScrollModifier: 'alt',
+      macOptionIsMeta:  true,
+      windowOptions: {
+        setWinSizeChars: true
+      }
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(containerRef.current);
 
-    // ── 终端极速渲染器：Canvas 附加组件 ───────────────────────────
-    // 使用 xterm.js 的高性能 Canvas 渲染引擎，既能保持极低延迟流畅度，
-    // 又能完美原生支持背景透明通道 (allowTransparency)。
-    let canvasAddon = null;
+    // ── WebGL 渲染器 ──────────────────────────────────────────────
+    let webglAddon = null;
     try {
-      canvasAddon = new CanvasAddon();
-      term.loadAddon(canvasAddon);
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+      });
+      term.loadAddon(webglAddon);
     } catch (e) {
-      console.warn('Canvas addon failed, falling back to DOM renderer.', e);
+      console.warn('WebGL addon failed, falling back to DOM renderer.', e);
     }
 
-    // ── 自定义快捷键 ────────────────────────────────────────────
+    termRef.current    = term;
+    fitAddonRef.current = fitAddon;
+
+    const fitTimer = setTimeout(() => {
+      try { fitAddon.fit(); } catch (_) {}
+    }, 100);
+
+    // ── 自定义快捷键 ──────────────────────────────────────────────
+    // websocket ref 用于粘贴／快捷键直接发送
+    const wsRef = { current: null };
+
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
 
-      let customShortcuts = { copy: 'Ctrl+C', paste: 'Ctrl+V', clear: 'Ctrl+L' };
+      // 1. 获取用户自定义的快捷键配置
+      let customShortcuts = { copy: 'Ctrl+C', paste: 'Ctrl+V', clear: 'Ctrl+L', newTab: 'Ctrl+T' };
       try {
         const saved = localStorage.getItem('appShortcuts');
         if (saved) customShortcuts = JSON.parse(saved);
       } catch (_) {}
 
+      // 2. 解析当前按下的组合键字符串（如 "Ctrl+C", "Ctrl+Shift+V"）
       const keys = [];
       if (e.ctrlKey)  keys.push('Ctrl');
       if (e.shiftKey) keys.push('Shift');
@@ -95,42 +114,186 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
       keys.push(keyName);
       const pressedStr = keys.join('+');
 
+      // ── 自定义复制键（默认 Ctrl+C）：智能处理 ────────
       if (pressedStr === customShortcuts.copy) {
+        const selection = term.getSelection();
+        if (selection) {
+          e.preventDefault();
+          navigator.clipboard.writeText(selection);
+          term.clearSelection();
+          return false; // 已复制，阻止 xterm 把按键发给服务器
+        }
+        // 【关键】如果没有选区，则直接放行 (return true)
+        // 这样如果你用的是 Ctrl+C，它就能变成标准的终端中断指令 (\x03) 发给服务器
+        return true; 
+      }
+
+      // ── Ctrl+Shift+C：强制系统级复制，作为备用方案 ────────
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.key === 'C') {
         e.preventDefault();
         const selection = term.getSelection();
         if (selection) navigator.clipboard.writeText(selection);
         return false;
       }
+
+      // ── 自定义粘贴键 ───────────────────────────
       if (pressedStr === customShortcuts.paste) {
         e.preventDefault();
         navigator.clipboard.readText().then((text) => {
-          if (text) AppGo.WriteTerminal(sessionId, text);
+          if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(new TextEncoder().encode(text));
+          }
         });
         return false;
       }
+
+      // ── 自定义清屏键 ───────────────────────────
       if (pressedStr === customShortcuts.clear) {
         e.preventDefault();
         term.clear();
         return false;
       }
+
+      // 新建标签页的快捷键放行给外层 App 处理
+      if (pressedStr === customShortcuts.newTab) {
+        return true;
+      }
+
+      // ── 自定义控制信号（向服务器发送对应的控制字符） ────────────────
+      const signalMap = {
+        sigint: new Uint8Array([0x03]),     // Ctrl+C (ETX)
+        eof: new Uint8Array([0x04]),        // Ctrl+D (EOT)
+        suspend: new Uint8Array([0x1a]),    // Ctrl+Z (SUB)
+        clearLine: new Uint8Array([0x15])   // Ctrl+U (NAK)
+      };
+
+      for (const [key, bytes] of Object.entries(signalMap)) {
+        if (customShortcuts[key] && pressedStr === customShortcuts[key]) {
+          e.preventDefault();
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(bytes);
+          }
+          return false;
+        }
+      }
+
+      // ── 其他标准控制字符全部透传给服务器处理 ────────────────────────
       return true;
     });
 
-    termRef.current    = term;
-    fitAddonRef.current = fitAddon;
+    // ── WebSocket 连接 & Predictive Local Echo ─────────────────────
+    let ws = null;
+    const pendingEchoes = [];
 
-    const fitTimer = setTimeout(() => {
-      try { fitAddon.fit(); } catch (_) {}
-    }, 100);
+    AppGo.GetWsPort().then((port) => {
+      if (!port || !termRef.current) return;
+      ws = new WebSocket(`ws://127.0.0.1:${port}/ws/${sessionId}`);
+      ws.binaryType = 'arraybuffer';
+      wsRef.current = ws;
 
-    // ── 输入防抖缓冲管线 ──────────────────────────────────────────
-    let inputBuffer = '';      // 仅用于本地指令历史提取
-    let sendBuffer = '';       // 用于防止 IPC 拥塞的发送缓冲
-    let sendTimer = null;
-    let isCooldown = false;
+      ws.onopen = () => {};
+
+      ws.onmessage = (ev) => {
+        if (!termRef.current) return;
+
+        // 如果没有正在预测的字符，直接使用原生 Uint8Array 交给 xterm.js 渲染（最快且无损，避免 TextDecoder 吃字符）
+        if (localStorage.getItem('terminalLocalEcho') === 'false' || pendingEchoes.length === 0) {
+          termRef.current.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
+          return;
+        }
+
+        // --- 预测匹配阶段 ---
+        let text = typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data);
+        let i = 0;
+        let newText = '';
+        
+        while (i < text.length) {
+          // 1. 跳过 ANSI 转义序列，原样保留
+          if (text[i] === '\x1b' && text[i+1] === '[') {
+            let j = i + 2;
+            while (j < text.length) {
+              const c = text[j];
+              if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) { j++; break; }
+              j++;
+            }
+            newText += text.substring(i, j);
+            i = j;
+            continue;
+          }
+          if (text[i] === '\x1b') {
+            newText += text.substring(i, Math.min(i + 2, text.length));
+            i += 2;
+            continue;
+          }
+
+          // 2. 匹配回显字符并丢弃
+          if (pendingEchoes.length > 0) {
+            const expected = pendingEchoes[0];
+            if (text[i] === expected) {
+              pendingEchoes.shift();
+              i++;
+              continue;
+            }
+            if (expected === '\x7F' && text[i] === '\b') {
+              pendingEchoes.shift();
+              i++;
+              continue;
+            }
+          }
+          
+          // 不匹配，停止预测，清空队列，正常输出
+          pendingEchoes.length = 0;
+          newText += text[i];
+          i++;
+        }
+        
+        // 写回经过滤的文本
+        termRef.current.write(newText);
+      };
+
+      ws.onerror = (e) => console.error('[Terminal] WebSocket error', e);
+    });
+
+    // ── 历史指令记录 + 输入直通 + Local Echo ────────────────────────
+    let inputBuffer = '';
+    let cwdTimer = null;
+    let localInputLength = 0; // 用于保护提示符，防止退格越界
 
     term.onData((data) => {
-      // 记录历史指令逻辑
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(new TextEncoder().encode(data));
+      }
+
+      // Local Echo 逻辑
+      if (localStorage.getItem('terminalLocalEcho') !== 'false') {
+        // 如果输入中不包含控制字符（如方向键、Esc、退格等），则视作常规可见输入（支持多字符连击或粘贴）
+        if (!/[\x00-\x1F\x7F]/.test(data)) {
+          // 由于 JavaScript 中部分多字节字符的 length 表现，这里按照字符串常规长度累加是安全的，
+          // 因为退格也是按字符来删的。
+          localInputLength += data.length;
+          for (let i = 0; i < data.length; i++) {
+            pendingEchoes.push(data[i]);
+          }
+          term.write(data);
+        } else if (data === '\x7F') { // Backspace
+          // 仅当我们确信这是用户刚刚输入的字符时，才在本地执行退格预测。
+          // 否则（localInputLength <= 0），将退格完全交还给服务器，保护提示符不被删除。
+          if (localInputLength > 0) {
+            localInputLength--;
+            pendingEchoes.push(data);
+            term.write('\b \b'); // 本地立即执行退格效果
+          }
+        } else if (data === '\r' || data === '\n' || data === '\r\n') {
+          localInputLength = 0;
+          pendingEchoes.length = 0;
+        } else {
+          // 遇到方向键、Ctrl快捷键（如 Ctrl+C/D/Z）等控制符，
+          // 立刻清零预测输入长度和回显队列，安全退回到服务器渲染模式
+          localInputLength = 0;
+          pendingEchoes.length = 0;
+        }
+      }
+
       if (data === '\r' || data === '\n' || data === '\r\n') {
         const cmd = inputBuffer.trim();
         if (cmd) {
@@ -139,27 +302,19 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
           }));
         }
         inputBuffer = '';
+        if (window.__cwdListeners?.[sessionId]) {
+          clearTimeout(cwdTimer);
+          cwdTimer = setTimeout(async () => {
+            try {
+              const cwd = await AppGo.GetTerminalCwd(sessionId);
+              if (cwd) window.dispatchEvent(new CustomEvent('ssh-terminal-cwd-changed', { detail: { sessionId, cwd } }));
+            } catch (_) {}
+          }, 400);
+        }
       } else if (data === '\x7F' || data === '\b') {
         inputBuffer = inputBuffer.slice(0, -1);
       } else if (data.length === 1 && data >= ' ' && data <= '~') {
         inputBuffer += data;
-      }
-
-      // 前端发送节流逻辑 (首键 0 延迟，后续 5ms 微批聚合)
-      if (!isCooldown) {
-        // 第一键立刻无阻碍直通后端，手感极佳
-        AppGo.WriteTerminal(sessionId, data);
-        isCooldown = true;
-        sendTimer = setTimeout(() => {
-          if (sendBuffer.length > 0) {
-            AppGo.WriteTerminal(sessionId, sendBuffer);
-            sendBuffer = '';
-          }
-          isCooldown = false;
-        }, 5); // 5ms 等待窗口
-      } else {
-        // 冷却期内的连续极速输入（如长按退格/高频敲击/粘贴），暂存到缓冲
-        sendBuffer += data;
       }
     });
 
@@ -169,11 +324,12 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
 
     return () => {
       clearTimeout(fitTimer);
-      clearTimeout(sendTimer); // 确保在卸载时清理定时器
+      clearTimeout(cwdTimer);
+      if (ws) { try { ws.close(); } catch (_) {} }
       termRef.current     = null;
       fitAddonRef.current = null;
-      if (canvasAddon) {
-        try { canvasAddon.dispose(); } catch (_) {}
+      if (webglAddon) {
+        try { webglAddon.dispose(); } catch (_) {}
       }
       try { term.dispose(); } catch (_) {}
     };
@@ -193,15 +349,6 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
     window.addEventListener('terminal-font-size-changed', handleFontSizeChange);
     return () => window.removeEventListener('terminal-font-size-changed', handleFontSizeChange);
   }, []);
-
-  // ── 接收 SSH 数据 ───────────────────────────────────────────────
-  useEffect(() => {
-    const eventName = `terminal-data-${sessionId}`;
-    const unbind = EventsOn(eventName, (data) => {
-      if (termRef.current) termRef.current.write(data);
-    });
-    return () => { unbind(); EventsOff(eventName); };
-  }, [sessionId]);
 
   // ── 状态变化提示 ────────────────────────────────────────────────
   useEffect(() => {
@@ -314,12 +461,42 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         </span>
         
         {/* 右侧极简状态显示 */}
-        <span style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.5, fontFamily: 'var(--font-mono)' }}>
-          {isConnected  ? 'Connected'
-           : isConnecting ? 'Connecting...'
-           : isError      ? 'Error'
-           : 'Offline'}
-        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 11, opacity: 0.5, fontFamily: 'var(--font-mono)' }}>
+            {isConnected  ? 'Connected'
+             : isConnecting ? 'Connecting...'
+             : isError      ? 'Error'
+             : 'Offline'}
+          </span>
+          {(isError || status === 'closed') && (
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('ssh-reconnect-trigger', { detail: sessionId }));
+              }}
+              style={{
+                padding: '2px 8px',
+                background: 'rgba(34, 197, 94, 0.15)',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                borderRadius: '4px',
+                color: '#22c55e',
+                fontSize: '11px',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(34, 197, 94, 0.25)';
+                e.target.style.borderColor = 'rgba(34, 197, 94, 0.5)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(34, 197, 94, 0.15)';
+                e.target.style.borderColor = 'rgba(34, 197, 94, 0.3)';
+              }}
+            >
+              重新连接
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── xterm 渲染区 ── */}
