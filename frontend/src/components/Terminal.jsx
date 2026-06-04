@@ -248,21 +248,32 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         let newText = '';
         
         while (i < text.length) {
-          // 1. 跳过 ANSI 转义序列，原样保留
-          if (text[i] === '\x1b' && text[i+1] === '[') {
-            let j = i + 2;
-            while (j < text.length) {
-              const c = text[j];
-              if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) { j++; break; }
-              j++;
+          // 1. 强大且健壮的 ANSI 转义序列跳过逻辑 (CSI、OSC 及其他单字符转义)
+          if (text[i] === '\x1b') {
+            let j = i + 1;
+            if (j >= text.length) { newText += text[i]; i++; continue; }
+            if (text[j] === '[') {
+               // CSI 序列
+               j++;
+               while (j < text.length) {
+                 const c = text.charCodeAt(j);
+                 if (c >= 0x40 && c <= 0x7E) { j++; break; }
+                 j++;
+               }
+            } else if (text[j] === ']') {
+               // OSC 序列 (如 Window Title)
+               j++;
+               while (j < text.length) {
+                 if (text[j] === '\x07') { j++; break; }
+                 if (text[j] === '\x1b' && j + 1 < text.length && text[j+1] === '\\') { j += 2; break; }
+                 j++;
+               }
+            } else {
+               // 其他 ESC 序列（跳过后面一个字符）
+               j++;
             }
             newText += text.substring(i, j);
             i = j;
-            continue;
-          }
-          if (text[i] === '\x1b') {
-            newText += text.substring(i, Math.min(i + 2, text.length));
-            i += 2;
             continue;
           }
 
@@ -279,9 +290,16 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
               i++;
               continue;
             }
+            // 遇到非打印控制字符（如 \r, \n, \x07 等），直接放行打印，不破坏当前的预测队列
+            const charCode = text.charCodeAt(i);
+            if (charCode < 32 || charCode === 127) {
+              newText += text[i];
+              i++;
+              continue;
+            }
           }
           
-          // 不匹配，停止预测，清空队列，正常输出
+          // 真正的冲突（服务器发来了与预测不符的可打印字符），视为脱轨，清空队列并接受服务器输出
           pendingEchoes.length = 0;
           newText += text[i];
           i++;
@@ -304,7 +322,7 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         wsRef.current.send(new TextEncoder().encode(data));
       }
 
-      // Local Echo 逻辑
+      // Local Echo 逻辑 (重新开启)
       if (localStorage.getItem('terminalLocalEcho') !== 'false') {
         // 如果输入中不包含控制字符（如方向键、Esc、退格等），则视作常规可见输入（支持多字符连击或粘贴）
         if (!/[\x00-\x1F\x7F]/.test(data)) {
@@ -325,12 +343,10 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
           }
         } else if (data === '\r' || data === '\n' || data === '\r\n') {
           localInputLength = 0;
-          pendingEchoes.length = 0;
         } else {
           // 遇到方向键、Ctrl快捷键（如 Ctrl+C/D/Z）等控制符，
-          // 立刻清零预测输入长度和回显队列，安全退回到服务器渲染模式
+          // 立刻清零预测输入长度，安全退回到服务器渲染模式
           localInputLength = 0;
-          pendingEchoes.length = 0;
         }
       }
 
