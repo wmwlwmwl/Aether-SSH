@@ -973,8 +973,8 @@ export default function App() {
                     )}
 
                     {/* 主要视口 (终端/标签页模式下的文件) */}
-                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', minWidth: 0, overflow: 'hidden' }}>
-                      <div style={{ display: (contentTab === 'terminal' || s.status !== 'connected') ? 'block' : 'none', height: '100%', flex: 1 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+                      <div style={{ display: (contentTab === 'terminal' || s.status !== 'connected') ? 'block' : 'none', flex: 1, minHeight: 0 }}>
                         <Terminal
                           sessionId={s.id}
                           status={s.status}

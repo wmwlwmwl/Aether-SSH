@@ -1,7 +1,7 @@
 $wailsJson = Get-Content "wails.json" | ConvertFrom-Json
 $version = $wailsJson.info.productVersion
 
-Write-Host "开始执行迭代打包任务，当前 AetherSSH 版本: V$version" -ForegroundColor Cyan
+Write-Host "Start AetherSSH packaging process: V$version" -ForegroundColor Cyan
 
 $basePath = "C:\Users\Angus\Desktop\Antigravity\SSH"
 $exePath = "$basePath\exe"
@@ -12,23 +12,32 @@ $goPath = "C:\Users\Angus\Desktop\Antigravity\SSH\Source_Codes\Aether-Source\go\
 if (!(Test-Path $exePath)) { New-Item -ItemType Directory -Path $exePath | Out-Null }
 if (!(Test-Path $portablePath)) { New-Item -ItemType Directory -Path $portablePath | Out-Null }
 
-# 临时注入必须的全局路径 (NSIS与Go环境)
+# Sync wails.json version to config.js
+$configPath = "frontend\src\config.js"
+if (Test-Path $configPath) {
+    $configContent = Get-Content $configPath -Raw
+    $configContent = $configContent -replace "APP_VERSION = '.*?';", "APP_VERSION = '$version';"
+    Set-Content -Path $configPath -Value $configContent
+    Write-Host "Synced version $version to frontend config.js" -ForegroundColor Green
+}
+
+# Inject required paths
 $env:PATH = "$goPath;$nsisPath;" + $env:PATH
 
-Write-Host "`n[1/2] 正在编译便携版 (Portable)..." -ForegroundColor Yellow
+Write-Host "`n[1/2] Compiling Portable Edition..." -ForegroundColor Yellow
 wails build -clean -upx
-if ($LASTEXITCODE -ne 0) { Write-Error "便携版编译失败"; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Error "Portable build failed"; exit 1 }
 
 $portableDest = "$portablePath\Aether_Portable_V$version.exe"
-Write-Host "输出便携版到: $portableDest" -ForegroundColor Green
-Copy-Item -Path "build\bin\Aether.exe" -Destination $portableDest
+Write-Host "Output portable to: $portableDest" -ForegroundColor Green
+Copy-Item -Path "build\bin\Aether.exe" -Destination $portableDest -Force
 
-Write-Host "`n[2/2] 正在编译安装包版 (Setup)..." -ForegroundColor Yellow
+Write-Host "`n[2/2] Compiling Setup Edition..." -ForegroundColor Yellow
 wails build -clean -nsis -upx
-if ($LASTEXITCODE -ne 0) { Write-Error "安装包版编译失败"; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Error "Setup build failed"; exit 1 }
 
 $setupDest = "$exePath\Aether_Setup_V$version.exe"
-Write-Host "输出安装包到: $setupDest" -ForegroundColor Green
-Copy-Item -Path "build\bin\Aether-amd64-installer.exe" -Destination $setupDest
+Write-Host "Output setup to: $setupDest" -ForegroundColor Green
+Copy-Item -Path "build\bin\Aether-amd64-installer.exe" -Destination $setupDest -Force
 
-Write-Host "`n打包任务圆满完成！(版本迭代输出，不覆盖旧文件)" -ForegroundColor Cyan
+Write-Host "`nPackaging completed successfully!" -ForegroundColor Cyan

@@ -74,11 +74,11 @@ function DialogContent({ current, onClose, onConfirm }) {
   const [inputValue, setInputValue] = useState(current.defaultValue || '');
 
   return (
-    <div className="modal-content" style={{ maxWidth: 360, padding: 32, textAlign: 'center', boxShadow: '0 24px 48px rgba(0,0,0,0.5)' }}>
+    <div className="modal modal-sm" style={{ padding: 32, textAlign: 'center' }}>
       <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', marginBottom: 16 }}>
         {current.title}
       </div>
-      <div style={{ fontSize: 14, color: 'var(--text-3)', marginBottom: 28, lineHeight: 1.6, wordBreak: 'break-all' }}>
+      <div style={{ fontSize: 14, color: 'var(--text-3)', marginBottom: 28, lineHeight: 1.6, wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
         {current.message}
       </div>
       
@@ -96,18 +96,18 @@ function DialogContent({ current, onClose, onConfirm }) {
         />
       )}
 
-      <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
+      <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
         {current.type !== 'alert' && (
-          <button className="btn btn-ghost" onClick={onClose} style={{ flex: 1, padding: '10px 0' }}>取消</button>
+          <button className="btn btn-secondary" onClick={onClose} style={{ flex: 1, padding: '10px 0', justifyContent: 'center' }}>取消</button>
         )}
         <button 
-          className={current.type === 'alert' ? "btn btn-primary" : "btn btn-secondary"} 
+          className="btn btn-primary"
           onClick={() => {
             if (current.type === 'prompt') onConfirm(inputValue);
             else if (current.type === 'confirm') onConfirm(true);
             else onClose();
           }}
-          style={current.type === 'alert' ? { minWidth: 120 } : { flex: 1, padding: '10px 0', borderColor: 'rgba(16, 185, 129, 0.5)', color: '#10b981' }}
+          style={current.type === 'alert' ? { minWidth: 120, justifyContent: 'center' } : { flex: 1, padding: '10px 0', justifyContent: 'center' }}
         >
           {current.type === 'alert' ? '我知道了' : '确定'}
         </button>

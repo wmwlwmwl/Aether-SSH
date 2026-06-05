@@ -1707,7 +1707,7 @@ a { color: var(--blue); text-decoration: none; }
   align-items: center;
   padding: 7px 16px;
   cursor: pointer;
-  color: #cdd9e5;
+  color: var(--text-2);
   font-size: 13px;
   border-radius: 4px;
   margin: 1px 4px;

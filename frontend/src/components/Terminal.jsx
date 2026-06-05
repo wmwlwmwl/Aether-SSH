@@ -493,6 +493,7 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
           navigator.clipboard.writeText(selectedText);
           termRef.current.clearSelection();
         }
+        termRef.current.focus();
         break;
       }
       case 'paste':
@@ -500,15 +501,22 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(new TextEncoder().encode(text));
           }
-        }).catch(err => console.error('Failed to read clipboard:', err));
+          termRef.current.focus();
+        }).catch(err => {
+          console.error('Failed to read clipboard:', err);
+          termRef.current.focus();
+        });
         break;
       case 'clear':
         termRef.current.clear();
+        termRef.current.focus();
         break;
       case 'selectAll':
         termRef.current.selectAll();
+        termRef.current.focus();
         break;
       default:
+        termRef.current.focus();
         break;
     }
   };
