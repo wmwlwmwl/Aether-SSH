@@ -16,7 +16,7 @@ if (savedTheme === 'light') {
 // Ensure the green accent color is overridden
 document.documentElement.style.setProperty('--green', savedAccent);
 
-// 禁用浏览器默认右键菜单（保留自定义上下文菜单）
+// 禁用浏览器默认右键菜单（完全拦截，以便使用统一的自定义玻璃菜单）
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 ReactDOM.createRoot(document.getElementById('root')).render(

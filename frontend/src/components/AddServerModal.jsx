@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import { useTranslation } from '../i18n.js';
 
@@ -18,14 +19,17 @@ export default function AddServerModal({ server, onSave, onClose }) {
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
 
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPassphrase, setShowPassphrase] = useState(false);
+
   useEffect(() => {
     if (server) {
       setForm({
         ...defaultForm,
         ...server,
         authType: server.authMethod ? (server.authMethod === 'privateKey' ? 'key' : 'password') : (server.authType || 'password'),
-        password: '',   // 不回显密码
-        passphrase: '',
+        password: server.password || '',
+        passphrase: server.passphrase || '',
       });
     } else {
       setForm(defaultForm);
@@ -138,17 +142,21 @@ export default function AddServerModal({ server, onSave, onClose }) {
                 </div>
 
                 {form.authType === 'password' ? (
-                  <div className="form-group">
+                  <div className="form-group" style={{ position: 'relative' }}>
                     <label className="form-label">
-                      {t('密码')} {server ? '(Optional if unchanged)' : '*'}
+                      {t('密码')} *
                     </label>
                     <input
                       className="input"
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       placeholder={t('请输入密码')}
                       value={form.password}
                       onChange={set('password')}
+                      style={{ paddingRight: 36 }}
                     />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 12, bottom: 10, background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
                   </div>
                 ) : (
                   <>
@@ -172,22 +180,24 @@ export default function AddServerModal({ server, onSave, onClose }) {
                         onChange={set('privateKey')}
                       />
                     </div>
-                    <div className="form-group">
-                      <label className="form-label">{t('私钥密码短语 (可选)')}</label>
+                    <div className="form-group" style={{ position: 'relative' }}>
+                      <label className="form-label">{t('私钥密码 (可选)')}</label>
                       <input
                         className="input"
-                        type="password"
+                        type={showPassphrase ? "text" : "password"}
                         placeholder="Passphrase"
                         value={form.passphrase}
                         onChange={set('passphrase')}
+                        style={{ paddingRight: 36 }}
                       />
+                      <button type="button" onClick={() => setShowPassphrase(!showPassphrase)} style={{ position: 'absolute', right: 12, bottom: 10, background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                        {showPassphrase ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
                     </div>
                   </>
                 )}
 
-                <div className="alert alert-info" style={{ fontSize: 12 }}>
-                  ℹ️ {t('所有凭据均以 AES-256 加密保存在本地') || '所有凭据均以 AES-256 加密保存在本地'}
-                </div>
+
               </div>
             </div>
           </div>

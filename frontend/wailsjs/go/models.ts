@@ -10,6 +10,7 @@ export namespace main {
 	    authMethod: string;
 	    privateKey?: string;
 	    passphrase?: string;
+	    os?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Connection(source);
@@ -26,6 +27,7 @@ export namespace main {
 	        this.authMethod = source["authMethod"];
 	        this.privateKey = source["privateKey"];
 	        this.passphrase = source["passphrase"];
+	        this.os = source["os"];
 	    }
 	}
 

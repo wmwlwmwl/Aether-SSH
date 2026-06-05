@@ -93,6 +93,7 @@ func main() {
 			DisableFramelessWindowDecorations: false,
 			WebviewUserDataPath:               "",
 			ZoomFactor:                        1.0,
+			Theme:                             windows.Dark,
 		},
 	})
 

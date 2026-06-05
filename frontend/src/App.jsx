@@ -10,9 +10,10 @@ import SettingsModal from './components/SettingsModal.jsx';
 import Toast from './components/Toast.jsx';
 import CommandHistory from './components/CommandHistory.jsx';
 import GlobalDialog from './components/GlobalDialog.jsx';
+import GlobalContextMenu from './components/GlobalContextMenu.jsx';
 import { useTranslation } from './i18n.js';
 import { APP_VERSION } from './config.js';
-import { Settings, House, Key, Minus, Square, X, RefreshCw, Wifi, Monitor } from 'lucide-react';
+import { Settings, House, Key, Minus, Square, X, RefreshCw, Wifi, Monitor, Eye, EyeOff } from 'lucide-react';
 
 import logoImg from './assets/logo.png';
 
@@ -135,6 +136,8 @@ export default function App() {
   const [quickPass, setQuickPass] = useState('');
   const [quickKey, setQuickKey] = useState('');
   const [quickPassphrase, setQuickPassphrase] = useState('');
+  const [showQuickPass, setShowQuickPass] = useState(false);
+  const [showQuickPassphrase, setShowQuickPassphrase] = useState(false);
 
   // ── 初始化全局主题 ──────────────────────────────────────
   useEffect(() => {
@@ -323,6 +326,18 @@ export default function App() {
           setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, osInfo: info } : s));
           // 检测到探针执行成功，自动启用监控面板，不需用户再次确认
           setMonitoringEnabled((prev) => ({ ...prev, [sessionId]: true }));
+          const detectedOs = info.os || info.platform || '';
+          if (detectedOs) {
+            setServers(prevServers => {
+              const currentServer = prevServers.find(s => s.id === savedServer.id);
+              if (currentServer && currentServer.os !== detectedOs) {
+                const updatedServer = { ...currentServer, os: detectedOs };
+                AppGo.SaveConnection(updatedServer).catch(console.error);
+                return prevServers.map(s => s.id === updatedServer.id ? updatedServer : s);
+              }
+              return prevServers;
+            });
+          }
         }
       } catch (_) {}
 
@@ -430,6 +445,18 @@ export default function App() {
         if (info) {
           setSessions((prev) => prev.map((s) => s.id === session.id ? { ...s, osInfo: info } : s));
           setMonitoringEnabled((prev) => ({ ...prev, [session.id]: true }));
+          const detectedOs = info.os || info.platform || '';
+          if (detectedOs) {
+            setServers(prevServers => {
+              const currentServer = prevServers.find(s => s.id === session.serverId);
+              if (currentServer && currentServer.os !== detectedOs) {
+                const updatedServer = { ...currentServer, os: detectedOs };
+                AppGo.SaveConnection(updatedServer).catch(console.error);
+                return prevServers.map(s => s.id === updatedServer.id ? updatedServer : s);
+              }
+              return prevServers;
+            });
+          }
         }
       } catch (_) {}
     } catch (err) {
@@ -505,6 +532,18 @@ export default function App() {
           setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, osInfo: info } : s));
           // 检测到探针执行成功，自动启用监控面板
           setMonitoringEnabled((prev) => ({ ...prev, [sessionId]: true }));
+          const detectedOs = info.os || info.platform || '';
+          if (detectedOs) {
+            setServers(prevServers => {
+              const currentServer = prevServers.find(s => s.id === server.id);
+              if (currentServer && currentServer.os !== detectedOs) {
+                const updatedServer = { ...currentServer, os: detectedOs };
+                AppGo.SaveConnection(updatedServer).catch(console.error);
+                return prevServers.map(s => s.id === updatedServer.id ? updatedServer : s);
+              }
+              return prevServers;
+            });
+          }
         }
       } catch (_) {}
 
@@ -738,9 +777,12 @@ export default function App() {
                     </select>
                   </div>
                   {quickAuth === 'password' ? (
-                    <div className="form-group-compact">
+                    <div className="form-group-compact" style={{ position: 'relative' }}>
                       <label>{t('密码')}</label>
-                      <input className="input-compact" type="password" placeholder={t('请输入密码')} value={quickPass} onChange={e => setQuickPass(e.target.value)} />
+                      <input className="input-compact" type={showQuickPass ? "text" : "password"} placeholder={t('请输入密码')} value={quickPass} onChange={e => setQuickPass(e.target.value)} style={{ paddingRight: 32 }} />
+                      <button type="button" onClick={() => setShowQuickPass(!showQuickPass)} style={{ position: 'absolute', right: 6, bottom: 4, background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                        {showQuickPass ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
                     </div>
                   ) : (
                     <>
@@ -751,9 +793,12 @@ export default function App() {
                         </div>
                         <textarea className="textarea-compact" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" value={quickKey} onChange={e => setQuickKey(e.target.value)} />
                       </div>
-                      <div className="form-group-compact">
+                      <div className="form-group-compact" style={{ position: 'relative' }}>
                         <label>{t('私钥密码短语 (可选)')}</label>
-                        <input className="input-compact" type="password" placeholder="Passphrase" value={quickPassphrase} onChange={e => setQuickPassphrase(e.target.value)} />
+                        <input className="input-compact" type={showQuickPassphrase ? "text" : "password"} placeholder="Passphrase" value={quickPassphrase} onChange={e => setQuickPassphrase(e.target.value)} style={{ paddingRight: 32 }} />
+                        <button type="button" onClick={() => setShowQuickPassphrase(!showQuickPassphrase)} style={{ position: 'absolute', right: 6, bottom: 4, background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                          {showQuickPassphrase ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
                       </div>
                     </>
                   )}
@@ -784,38 +829,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 🔑 快捷操作按钮 */}
-              <div className="glass-card" style={{ padding: '12px 16px' }}>
-                <div className="card-header-icon-title" style={{ marginBottom: 10 }}>
-                  <span className="card-header-icon">⚡</span>
-                  <span className="card-header-title">{t('快捷操作')}</span>
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: 13 }}
-                    onClick={() => setShowKeys(true)}
-                  >
-                    <span style={{ fontSize: 16 }}>🔑</span> {t('密钥')}
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: 13 }}
-                    onClick={() => {
-                      // 展示所有真实会话的日志，不创建假session
-                      const realSessions = sessions.filter(s => !s.serverId?.startsWith('__'));
-                      if (realSessions.length > 0) {
-                        setActiveSessionId(realSessions[realSessions.length - 1].id);
-                        setContentTab('history');
-                      } else {
-                        addToast('暂无连接中的会话', 'info', 2000);
-                      }
-                    }}
-                  >
-                    <span style={{ fontSize: 16 }}>📋</span> {t('日志')}
-                  </button>
-                </div>
-              </div>
             </div>
 
             {/* 右半栏：历史会话与主机目录 */}
@@ -1543,6 +1556,7 @@ export default function App() {
           </div>
         </div>
       )}
+      <GlobalContextMenu />
     </div>
   );
 }

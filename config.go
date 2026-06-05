@@ -26,6 +26,7 @@ type Connection struct {
 	AuthMethod string `json:"authMethod"`
 	PrivateKey string `json:"privateKey,omitempty"`
 	Passphrase string `json:"passphrase,omitempty"`
+	Os         string `json:"os,omitempty"`
 }
 
 type ConfigManager struct {
