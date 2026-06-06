@@ -322,7 +322,7 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
         wsRef.current.send(new TextEncoder().encode(data));
       }
 
-      // Local Echo 逻辑 (重新开启)
+      // Local Echo 逻辑 (恢复默认开启)
       if (localStorage.getItem('terminalLocalEcho') !== 'false') {
         // 如果输入中不包含控制字符（如方向键、Esc、退格等），则视作常规可见输入（支持多字符连击或粘贴）
         if (!/[\x00-\x1F\x7F]/.test(data)) {
@@ -416,28 +416,34 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
     }
   }, [status]);
 
-  // ── 激活时 refit ────────────────────────────────────────────────
+  // ── 监听容器大小变化进行自适应 ───────────────────────────────────
   useEffect(() => {
-    if (!isActive || !fitAddonRef.current || !termRef.current) return;
-    const timer = setTimeout(() => {
-      try {
-        fitAddonRef.current.fit();
-        const { cols, rows } = termRef.current;
-        AppGo.ResizeTerminal(sessionId, cols, rows);
-      } catch (_) {}
-    }, 60);
-    return () => clearTimeout(timer);
-  }, [isActive, sessionId]);
+    if (!isActive || !containerRef.current || !fitAddonRef.current || !termRef.current) return;
 
-  // ── 窗口变化时 fit ──────────────────────────────────────────────
-  useEffect(() => {
-    const handleResize = () => {
-      if (!isActive || !fitAddonRef.current) return;
-      try { fitAddonRef.current.fit(); } catch (_) {}
+    let resizeTimer = null;
+    const observer = new ResizeObserver((entries) => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (!termRef.current || !fitAddonRef.current || !containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        try {
+          fitAddonRef.current.fit();
+          const { cols, rows } = termRef.current;
+          AppGo.ResizeTerminal(sessionId, cols, rows);
+        } catch (e) {
+          console.error('[Terminal] Resize error:', e);
+        }
+      }, 50);
+    });
+
+    observer.observe(containerRef.current);
+
+    return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      observer.disconnect();
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [isActive]);
+  }, [isActive, sessionId]);
 
   // ── 背景管理与刷新 ────────────────────────────────────────────────
   const [bgInfo, setBgInfo] = useState({

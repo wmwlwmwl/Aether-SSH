@@ -67,7 +67,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-md">
         <div className="modal-header">
           <div className="modal-title">
