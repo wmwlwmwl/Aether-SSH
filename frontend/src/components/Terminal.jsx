@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { AttachAddon } from '@xterm/addon-attach';
-import { Copy, Clipboard, Trash2, CheckSquare, MoreHorizontal } from 'lucide-react';
+import { Copy, Clipboard, Trash2, CheckSquare, MoreHorizontal, Play, Clock, X } from 'lucide-react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import { reduceTerminalHistoryInput } from './terminalHistory.js';
 import '@xterm/xterm/css/xterm.css';
@@ -103,7 +103,7 @@ function readDisplayedCommand(term) {
   return candidate.trim();
 }
 
-export default function Terminal({ sessionId, status, isActive, serverName }) {
+export default function Terminal({ sessionId, serverId, status, isActive, serverName }) {
   const containerRef   = useRef(null);
   const termRef        = useRef(null);
   const fitAddonRef    = useRef(null);
@@ -113,6 +113,12 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
   const [contextMenu, setContextMenu]         = useState(null);
   const [contextHasSelection, setContextHasSelection] = useState(false);
   const [justConnected, setJustConnected]     = useState(false);
+  const [cmdInput, setCmdInput]               = useState('');
+  const [showHistory, setShowHistory]         = useState(false);
+  const [historyList, setHistoryList]         = useState([]);
+  const cmdInputRef                           = useRef(null);
+  const historyBtnRef                         = useRef(null);
+  const [historyPopupPos, setHistoryPopupPos] = useState(null);
 
   // ── 初始化 xterm + WebSocket 终端通道 ────────────────────────────────
   // xterm.js 通过 AttachAddon + WebSocket 直接连到本地 Go WebSocket 服务器
@@ -368,7 +374,7 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
 
       for (const cmd of commands) {
         window.dispatchEvent(new CustomEvent('ssh-command-history', {
-          detail: { sessionId, command: cmd, time: new Date().toISOString(), source: 'input' }
+          detail: { sessionId: serverId, command: cmd, time: new Date().toISOString(), source: 'input' }
         }));
       }
 
@@ -590,6 +596,93 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
     }
   }, [isConnected]);
 
+  // ── 底部命令输入栏逻辑 ──────────────────────────────────────
+  const loadHistory = () => {
+    try {
+      const saved = localStorage.getItem(`cmd_history_${serverId}`);
+      const entries = saved ? JSON.parse(saved) : [];
+      setHistoryList(entries);
+    } catch { setHistoryList([]); }
+  };
+
+  // 监听清除事件（CommandHistory 标签页清空时同步）
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail?.sessionId === serverId) setHistoryList([]);
+    };
+    window.addEventListener('ssh-history-cleared', handler);
+    return () => window.removeEventListener('ssh-history-cleared', handler);
+  }, [serverId]);
+
+  const toggleHistory = () => {
+    const willShow = !showHistory;
+    if (willShow) {
+      loadHistory();
+      const rect = historyBtnRef.current?.getBoundingClientRect();
+      if (rect) {
+        setHistoryPopupPos({
+          left: Math.min(rect.right - 480, window.innerWidth - 490),
+          bottom: window.innerHeight - rect.top + 4,
+        });
+      }
+    } else {
+      setHistoryPopupPos(null);
+    }
+    setShowHistory(willShow);
+  };
+
+  const selectHistoryCmd = (cmd) => {
+    setCmdInput(cmd);
+    setShowHistory(false);
+    setHistoryPopupPos(null);
+    cmdInputRef.current?.focus();
+  };
+
+  const executeCommand = (directCmd) => {
+    const cmd = directCmd || cmdInput;
+    if (!cmd?.trim() || !isConnected) return;
+    AppGo.WriteTerminal(sessionId, cmd.trim() + '\r');
+    window.dispatchEvent(new CustomEvent('ssh-command-history', {
+      detail: { sessionId: serverId, command: cmd.trim(), time: new Date().toISOString(), source: 'input' }
+    }));
+    setCmdInput('');
+    setShowHistory(false);
+    setHistoryPopupPos(null);
+  };
+
+  const copyCommand = () => {
+    if (!cmdInput.trim()) return;
+    navigator.clipboard.writeText(cmdInput).catch(() => {});
+  };
+
+  const deleteHistoryItem = (id) => {
+    setHistoryList(prev => {
+      const next = prev.filter(item => item.id !== id);
+      try { localStorage.setItem(`cmd_history_${serverId}`, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  // 命令栏按钮样式辅助函数
+  const btnStyle = (color) => ({
+    border: 'none',
+    background: 'transparent',
+    color: color === 'red' ? '#ff7b72' : '#8b949e',
+    cursor: 'pointer',
+    borderRadius: 3,
+    padding: '2px 6px',
+  });
+  const iconBtnStyle = (color, bg) => ({
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 22, height: 22,
+    background: bg,
+    border: '1px solid transparent',
+    borderRadius: 3,
+    color,
+    cursor: 'pointer',
+    transition: 'all 0.1s',
+  });
+
   return (
     <div 
       onContextMenu={handleContextMenu}
@@ -692,7 +785,222 @@ export default function Terminal({ sessionId, status, isActive, serverName }) {
           background: 'transparent',
         }}
       />
+
+      {/* ── 底部命令输入栏 ── */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '6px 10px',
+        background: 'rgba(22, 27, 34, 0.85)',
+        backdropFilter: 'blur(8px)',
+        borderTop: '1px solid rgba(255,255,255,0.06)',
+        flexShrink: 0,
+        position: 'relative',
+      }}>
+        {/* 命令输入框 */}
+        <input
+          ref={cmdInputRef}
+          className="input"
+          value={cmdInput}
+          onChange={e => setCmdInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') executeCommand();
+            if (e.key === 'Escape') setShowHistory(false);
+          }}
+          placeholder="输入命令"
+          style={{
+            flex: 1,
+            fontSize: 12,
+            fontFamily: "'JetBrains Mono', monospace",
+            padding: '7px 10px',
+            minHeight: 32,
+            background: 'rgba(13,17,23,0.8)',
+            borderColor: cmdInput ? 'rgba(34,197,94,0.3)' : 'rgba(48,54,61,0.5)',
+          }}
+        />
+
+        {/* 历史按钮 */}
+        <button
+          ref={historyBtnRef}
+          onClick={toggleHistory}
+          title="历史指令"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '6px 10px',
+            fontSize: 11,
+            color: showHistory ? '#22c55e' : '#8b949e',
+            background: showHistory ? 'rgba(34,197,94,0.1)' : 'transparent',
+            border: `1px solid ${showHistory ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 4,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s',
+          }}
+        >
+          <Clock size={13} />
+          <span>历史</span>
+        </button>
+
+        {/* 执行按钮（绿色） */}
+        <button
+          onClick={executeCommand}
+          disabled={!cmdInput.trim() || !isConnected}
+          title="执行"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 30, height: 30,
+            background: (cmdInput.trim() && isConnected) ? 'rgba(34,197,94,0.15)' : 'transparent',
+            border: `1px solid ${(cmdInput.trim() && isConnected) ? 'rgba(34,197,94,0.35)' : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 4,
+            color: (cmdInput.trim() && isConnected) ? '#22c55e' : '#484f58',
+            cursor: (cmdInput.trim() && isConnected) ? 'pointer' : 'not-allowed',
+            transition: 'all 0.15s',
+            flexShrink: 0,
+          }}
+        >
+          <Play size={13} />
+        </button>
+
+        {/* 复制按钮（蓝色） */}
+        <button
+          onClick={copyCommand}
+          disabled={!cmdInput.trim()}
+          title="复制"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 30, height: 30,
+            background: cmdInput.trim() ? 'rgba(88,166,255,0.15)' : 'transparent',
+            border: `1px solid ${cmdInput.trim() ? 'rgba(88,166,255,0.35)' : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 4,
+            color: cmdInput.trim() ? '#58a6ff' : '#484f58',
+            cursor: cmdInput.trim() ? 'pointer' : 'not-allowed',
+            transition: 'all 0.15s',
+            flexShrink: 0,
+          }}
+        >
+          <Clipboard size={13} />
+        </button>
       </div>
+      </div>
+
+      {/* ── 历史指令弹窗（fixed 定位，不受 overflow:hidden 裁剪） ── */}
+      {showHistory && historyPopupPos && (
+        <>
+          {/* 透明遮罩层，点击关闭 */}
+          <div
+            onClick={() => { setShowHistory(false); setHistoryPopupPos(null); }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 99,
+              background: 'transparent',
+            }}
+          />
+          <div style={{
+            position: 'fixed',
+            left: historyPopupPos.left,
+            bottom: historyPopupPos.bottom,
+            width: 480,
+            maxHeight: 280,
+            overflowY: 'auto',
+            background: '#161b22',
+            border: '1px solid rgba(48,54,61,0.9)',
+            borderRadius: 8,
+            boxShadow: '0 -8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)',
+            zIndex: 100,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 12,
+          }}>
+            {/* 弹窗头部 */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '8px 10px',
+              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              color: '#8b949e',
+              fontSize: 11,
+              flexShrink: 0,
+            }}>
+              <span>历史命令</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={() => {
+                    setHistoryList([]);
+                    try { localStorage.removeItem(`cmd_history_${serverId}`); } catch {}
+                    window.dispatchEvent(new CustomEvent('ssh-history-cleared', { detail: { sessionId: serverId } }));
+                  }}
+                  style={{ ...btnStyle('red'), fontSize: 11, padding: '2px 8px' }}
+                >
+                  清空列表
+                </button>
+                <button
+                  onClick={() => { setShowHistory(false); setHistoryPopupPos(null); }}
+                  style={{ border: 'none', background: 'none', color: '#8b949e', cursor: 'pointer', padding: 2 }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* 历史列表 */}
+            {historyList.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: '#6e7681', fontSize: 12 }}>暂无历史记录</div>
+            ) : historyList.map(item => (
+              <div
+                key={item.id}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  borderBottom: '1px solid rgba(255,255,255,0.03)',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(34,197,94,0.06)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <span
+                  onClick={() => selectHistoryCmd(item.command)}
+                  style={{
+                    flex: 1,
+                    color: '#cdd9e5',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    paddingRight: 8,
+                  }}
+                  title={item.command}
+                >
+                  {item.command}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+                  {/* 执行（绿色） */}
+                  <button
+                    onClick={() => executeCommand(item.command)}
+                    title="执行"
+                    style={{ ...iconBtnStyle('#22c55e', 'rgba(34,197,94,0.15)') }}
+                  >
+                    <Play size={12} />
+                  </button>
+                  {/* 复制（蓝色） */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(item.command).catch(() => {}); }}
+                    title="复制"
+                    style={{ ...iconBtnStyle('#58a6ff', 'rgba(88,166,255,0.15)') }}
+                  >
+                    <Clipboard size={12} />
+                  </button>
+                  {/* 删除（红色） */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteHistoryItem(item.id); }}
+                    title="删除"
+                    style={{ ...iconBtnStyle('#ff7b72', 'rgba(255,123,114,0.15)') }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* ── 右键上下文菜单（增强版：图标 + 边界检测 + disabled 状态） ── */}
       {contextMenu && (

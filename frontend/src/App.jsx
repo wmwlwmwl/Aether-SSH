@@ -1360,6 +1360,7 @@ export default function App() {
                           }}>
                             <Terminal
                               sessionId={t.id}
+                              serverId={s.id}
                               status={s.status}
                               isActive={activeSessionId === s.id && activeTerminalId === t.id && (contentTab === 'terminal' || fileManagerPosition !== 'tab')}
                               serverName={s.serverName}

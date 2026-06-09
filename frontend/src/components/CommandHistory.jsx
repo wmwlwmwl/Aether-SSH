@@ -48,8 +48,14 @@ export default function CommandHistory({ sessionId, addToast }) {
       pushHistoryEntry(detail);
     });
 
+    const handleHistoryCleared = (e) => {
+      if (e.detail?.sessionId === sessionId) setHistory([]);
+    };
+    window.addEventListener('ssh-history-cleared', handleHistoryCleared);
+
     return () => {
       window.removeEventListener('ssh-command-history', handleNewCommand);
+      window.removeEventListener('ssh-history-cleared', handleHistoryCleared);
       if (unbindRemote) unbindRemote();
     };
   }, [sessionId]);
@@ -68,9 +74,10 @@ export default function CommandHistory({ sessionId, addToast }) {
   };
 
   const handleClear = async () => {
-    if (await window.aetherDialog?.confirm(`${t('确定要清空历史指令吗？') || '确定要清空历史指令吗？'}`)) {
+    if (await window.aetherDialog?.confirm(`确定要清空历史指令吗？`)) {
       setHistory([]);
       try { localStorage.removeItem(`cmd_history_${sessionId}`); } catch (_) {}
+      window.dispatchEvent(new CustomEvent('ssh-history-cleared', { detail: { sessionId } }));
     }
   };
 
