@@ -64,7 +64,7 @@ function isArchive(name) {
 }
 
 // Context menu component
-function ContextMenu({ pos, item, onClose, onDownload, onEdit, onRename, onDelete, onMkdir, onCompress, onUncompress, t }) {
+function ContextMenu({ pos, item, onClose, onDownload, onEdit, onRename, onDelete, onMkdir, onNewFile, onCompress, onUncompress, t }) {
   const ref = useRef(null);
   useEffect(() => {
     const handler = (e) => {
@@ -106,6 +106,11 @@ function ContextMenu({ pos, item, onClose, onDownload, onEdit, onRename, onDelet
         </div>
       )}
       <div className="context-menu-divider" />
+      {!item && (
+        <div className="context-menu-item" onClick={onNewFile}>
+          <span>📄</span> {t('新建文件')}
+        </div>
+      )}
       {!item && (
         <div className="context-menu-item" onClick={onMkdir}>
           <span>📁</span> {t('新建文件夹')}
@@ -296,6 +301,20 @@ export default function FileManager({ sessionId, addToast }) {
     }
   };
 
+  // Create file
+  const handleNewFile = async () => {
+    const name = await window.aetherDialog?.prompt('新文件名称:');
+    if (!name) return;
+    const remotePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+    try {
+      await AppGo.WriteFile(sessionId, remotePath, '');
+      addToast(`文件创建成功: ${name}`, 'success');
+      await loadDir(currentPath);
+    } catch (err) {
+      addToast(`创建失败: ${err}`, 'error');
+    }
+  };
+
   // Compress
   const handleCompress = async (item) => {
     const remotePath = currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`;
@@ -377,6 +396,7 @@ export default function FileManager({ sessionId, addToast }) {
           ))}
         </div>
 
+        <button className="btn btn-secondary btn-sm" onClick={handleNewFile}>📄 {t('新建文件')}</button>
         <button className="btn btn-secondary btn-sm" onClick={handleMkdir}>📁 {t('新建文件夹')}</button>
         <button className="btn btn-secondary btn-sm" onClick={handleUpload}>
           ⬆ {t('上传文件')}
@@ -516,6 +536,7 @@ export default function FileManager({ sessionId, addToast }) {
           onRename={() => { startRename(contextMenu.item); closeContextMenu(); }}
           onDelete={() => { handleDelete(contextMenu.item); closeContextMenu(); }}
           onMkdir={() => { handleMkdir(); closeContextMenu(); }}
+          onNewFile={() => { handleNewFile(); closeContextMenu(); }}
           onCompress={() => { handleCompress(contextMenu.item); closeContextMenu(); }}
           onUncompress={() => { handleUncompress(contextMenu.item); closeContextMenu(); }}
         />
