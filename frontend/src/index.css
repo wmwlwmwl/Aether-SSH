@@ -249,6 +249,74 @@ a { color: var(--blue); text-decoration: none; }
   transition: var(--transition-slow);
 }
 
+.probe-resizer {
+  flex-shrink: 0;
+  margin-left: -2px;
+  margin-right: -2px;
+}
+
+.probe-partition-header,
+.probe-partition-row {
+  display: grid;
+  grid-template-columns: minmax(48px, 0.72fr) minmax(24px, 1fr) minmax(48px, max-content) minmax(48px, max-content) minmax(38px, max-content);
+  align-items: center;
+  column-gap: 6px;
+}
+
+.probe-partition-header {
+  padding: 0 0 3px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-4);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.probe-partition-header span:nth-child(n + 3) {
+  text-align: right;
+}
+
+.probe-partition-row {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.probe-partition-mount {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.probe-partition-bar {
+  min-width: 24px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.probe-partition-value,
+.probe-partition-percent {
+  justify-self: end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.probe-partition-value {
+  color: var(--text-3);
+}
+
+.probe-partition-row .probe-partition-value:nth-child(3) {
+  color: var(--text-4);
+}
+
+.probe-partition-percent {
+  font-weight: 600;
+}
+
 /* ── Buttons ─────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -1613,6 +1681,7 @@ a { color: var(--blue); text-decoration: none; }
   flex: 1;
   overflow-y: auto;
   padding-right: 4px;
+  padding-bottom: 12px;
 }
 
 /* 过滤 Tab 按钮 */

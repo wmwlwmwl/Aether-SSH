@@ -11,6 +11,7 @@ import Toast from './components/Toast.jsx';
 import CommandHistory from './components/CommandHistory.jsx';
 import GlobalDialog from './components/GlobalDialog.jsx';
 import GlobalContextMenu from './components/GlobalContextMenu.jsx';
+import { clampPanelWidth } from './components/probeFormatting.js';
 import { useTranslation } from './i18n.js';
 import { APP_VERSION } from './config.js';
 import { Settings, House, Key, Minus, Square, X, RefreshCw, Wifi, Monitor, Eye, EyeOff } from 'lucide-react';
@@ -49,9 +50,13 @@ export default function App() {
   const [bottomSplitHeight, setBottomSplitHeight] = useState(() => {
     return parseInt(localStorage.getItem('bottomSplitHeight') || '250', 10);
   });
+  const [probePanelWidth, setProbePanelWidth] = useState(() => {
+    return clampPanelWidth(localStorage.getItem('probePanelWidth') || '320');
+  });
 
   const leftSplitWidthRef = useRef(leftSplitWidth);
   const bottomSplitHeightRef = useRef(bottomSplitHeight);
+  const probePanelWidthRef = useRef(probePanelWidth);
 
   const updateLeftSplitWidth = (w) => {
     setLeftSplitWidth(w);
@@ -61,6 +66,11 @@ export default function App() {
     setBottomSplitHeight(h);
     bottomSplitHeightRef.current = h;
   };
+  const updateProbePanelWidth = (w) => {
+    const next = clampPanelWidth(w);
+    setProbePanelWidth(next);
+    probePanelWidthRef.current = next;
+  };
 
   const startDrag = (e, direction) => {
     e.preventDefault();
@@ -68,11 +78,12 @@ export default function App() {
     const startY = e.clientY;
     const startWidth = leftSplitWidthRef.current;
     const startHeight = bottomSplitHeightRef.current;
+    const startProbeWidth = probePanelWidthRef.current;
 
     const resizer = e.target;
     resizer.classList.add('dragging');
 
-    document.body.style.cursor = direction === 'left' ? 'col-resize' : 'row-resize';
+    document.body.style.cursor = direction === 'bottom' ? 'row-resize' : 'col-resize';
     document.body.style.userSelect = 'none';
 
     const handleMouseMove = (moveEvent) => {
@@ -80,6 +91,9 @@ export default function App() {
         const deltaX = moveEvent.clientX - startX;
         const newWidth = Math.max(180, Math.min(800, startWidth + deltaX));
         updateLeftSplitWidth(newWidth);
+      } else if (direction === 'probe') {
+        const deltaX = startX - moveEvent.clientX;
+        updateProbePanelWidth(startProbeWidth + deltaX);
       } else {
         const deltaY = startY - moveEvent.clientY; // 往上拖高度变大
         const newHeight = Math.max(100, Math.min(600, startHeight + deltaY));
@@ -97,6 +111,8 @@ export default function App() {
 
       if (direction === 'left') {
         localStorage.setItem('leftSplitWidth', leftSplitWidthRef.current.toString());
+      } else if (direction === 'probe') {
+        localStorage.setItem('probePanelWidth', probePanelWidthRef.current.toString());
       } else {
         localStorage.setItem('bottomSplitHeight', bottomSplitHeightRef.current.toString());
       }
@@ -1051,14 +1067,27 @@ export default function App() {
 
               {/* 右侧：系统监控探针面板（强制常显）*/}
               {activeSession && activeSession.status === 'connected' && (
-                <div className="probe-panel-wrapper">
-                  <ProbePanel
-                    sessionId={activeSession.id}
-                    addToast={addToast}
-                    enabled={!!monitoringEnabled[activeSession.id]}
-                    onEnable={() => setMonitoringEnabled(prev => ({ ...prev, [activeSession.id]: true }))}
+                <>
+                  <div
+                    className="split-resizer-v probe-resizer"
+                    onMouseDown={(e) => startDrag(e, 'probe')}
+                    title="调整监控边栏宽度"
                   />
-                </div>
+                  <div
+                    className="probe-panel-wrapper"
+                    style={{
+                      width: probePanelWidth,
+                      minWidth: probePanelWidth,
+                    }}
+                  >
+                    <ProbePanel
+                      sessionId={activeSession.id}
+                      addToast={addToast}
+                      enabled={!!monitoringEnabled[activeSession.id]}
+                      onEnable={() => setMonitoringEnabled(prev => ({ ...prev, [activeSession.id]: true }))}
+                    />
+                  </div>
+                </>
               )}
             </div>
           </div>

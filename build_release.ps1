@@ -3,11 +3,11 @@ $version = $wailsJson.info.productVersion
 
 Write-Host "Start AetherSSH packaging process: V$version" -ForegroundColor Cyan
 
-$basePath = "C:\Users\Angus\Desktop\Antigravity\SSH"
+$basePath = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $exePath = "$basePath\exe"
 $portablePath = "$basePath\Portable"
 $nsisPath = "$basePath\Packaging_Tools\nsis\nsis-3.08"
-$goPath = "C:\Users\Angus\Desktop\Antigravity\SSH\Source_Codes\Aether-Source\go\bin"
+$goPath = "$basePath\Source_Codes\Aether-Source\go\bin"
 
 if (!(Test-Path $exePath)) { New-Item -ItemType Directory -Path $exePath | Out-Null }
 if (!(Test-Path $portablePath)) { New-Item -ItemType Directory -Path $portablePath | Out-Null }

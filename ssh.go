@@ -22,10 +22,12 @@ import (
 )
 
 type SessionData struct {
-	Client  *ssh.Client
-	Session *ssh.Session
-	SFTP    *sftp.Client
-	Stdin   io.WriteCloser
+	Client              *ssh.Client
+	Session             *ssh.Session
+	SFTP                *sftp.Client
+	Stdin               io.WriteCloser
+	HistoryStream       *commandHistoryStream
+	RemoteHistoryActive bool
 }
 
 type SSHManager struct {
@@ -170,21 +172,36 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 		return err
 	}
 
+	shellPath := detectRemoteShell(client)
+	launchCmd, remoteHistoryActive := buildShellLaunchCommand(shellPath)
+
 	// Start shell
-	if err := session.Shell(); err != nil {
+	if remoteHistoryActive {
+		err = session.Start(launchCmd)
+	} else {
+		err = session.Shell()
+	}
+	if err != nil {
 		return err
 	}
 
+	var historyStream *commandHistoryStream
+	if remoteHistoryActive {
+		historyStream = newCommandHistoryStream()
+	}
+
 	m.sessions[sessionId] = &SessionData{
-		Client:  client,
-		Session: session,
-		SFTP:    sftpClient,
-		Stdin:   stdin,
+		Client:              client,
+		Session:             session,
+		SFTP:                sftpClient,
+		Stdin:               stdin,
+		HistoryStream:       historyStream,
+		RemoteHistoryActive: remoteHistoryActive,
 	}
 
 	// 启动读取 stdout/stderr
-	go m.pipeOutput(sessionId, stdout)
-	go m.pipeOutput(sessionId, stderr)
+	go m.pipeOutput(sessionId, stdout, historyStream)
+	go m.pipeOutput(sessionId, stderr, nil)
 
 	// 启动后台连接意外断开监控协程
 	go func() {
@@ -204,7 +221,7 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 	return nil
 }
 
-func (m *SSHManager) pipeOutput(sessionId string, r io.Reader) {
+func (m *SSHManager) pipeOutput(sessionId string, r io.Reader, historyStream *commandHistoryStream) {
 	buf := make([]byte, 32768)
 
 	// 直接读取并通过 WebSocket 发送，不再批处理缓冲
@@ -214,6 +231,27 @@ func (m *SSHManager) pipeOutput(sessionId string, r io.Reader) {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
+			if historyStream != nil {
+				visible, commands := historyStream.Process(data)
+				data = visible
+				for _, command := range commands {
+					if command == "" || m.ctx == nil {
+						continue
+					}
+					runtime.EventsEmit(m.ctx, "ssh-command-executed", map[string]string{
+						"sessionId": sessionId,
+						"command":   command,
+						"time":      time.Now().Format(time.RFC3339),
+						"source":    "remote",
+					})
+				}
+			}
+			if len(data) == 0 {
+				if err != nil {
+					return
+				}
+				continue
+			}
 			if m.app != nil {
 				m.app.WriteWsOutput(sessionId, data)
 			} else if m.ctx != nil {

@@ -2,6 +2,15 @@ import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from '../i18n.js';
 import { Monitor, Pencil, Link, Trash2 } from 'lucide-react';
 
+const MENU_VIEWPORT_GAP = 12;
+const MENU_ESTIMATED_WIDTH = 196;
+const MENU_ESTIMATED_HEIGHT = 132;
+
+const clampMenuPosition = (x, y, width = MENU_ESTIMATED_WIDTH, height = MENU_ESTIMATED_HEIGHT) => ({
+  x: Math.max(MENU_VIEWPORT_GAP, Math.min(x, window.innerWidth - width - MENU_VIEWPORT_GAP)),
+  y: Math.max(MENU_VIEWPORT_GAP, Math.min(y, window.innerHeight - height - MENU_VIEWPORT_GAP)),
+});
+
 const LATENCY_CLASS = (ms) => {
   if (ms === null || ms === undefined) return 'offline';
   if (ms < 0) return 'good';     // -1 = <1ms (proxy/local)
@@ -65,11 +74,22 @@ export default function ServerList({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  useEffect(() => {
+    if (!menuServer || !menuRef.current) return;
+
+    const { offsetWidth, offsetHeight } = menuRef.current;
+    setMenuPos((prev) => {
+      const next = clampMenuPosition(prev.x, prev.y, offsetWidth, offsetHeight);
+      if (next.x === prev.x && next.y === prev.y) return prev;
+      return next;
+    });
+  }, [menuServer]);
+
   const handleContextMenu = (e, server) => {
     e.preventDefault();
     e.stopPropagation();
     setMenuServer(server);
-    setMenuPos({ x: e.clientX, y: e.clientY });
+    setMenuPos(clampMenuPosition(e.clientX, e.clientY));
   };
 
   const isActive = (server) => {

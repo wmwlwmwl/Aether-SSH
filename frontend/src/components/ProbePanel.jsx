@@ -1,5 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
+import {
+  formatCapacity,
+  formatPartitionCapacity,
+  formatRate,
+  formatTransferTotal,
+} from './probeFormatting.js';
 
 // ── Sparkline SVG ──────────────────────────────────────────────────────────
 function Sparkline({ data, color = '#22c55e', fill = true, height = 36, width = '100%' }) {
@@ -56,14 +62,14 @@ function PartRow({ mount, size, avail, usedPct }) {
   const pct = Math.min(Math.max(usedPct, 0), 100);
   const color = pct > 85 ? '#ef4444' : pct > 60 ? '#f59e0b' : '#22c55e';
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderBottom: '1px solid var(--border-light)' }}>
-      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', width: 62, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{mount}</span>
-      <div style={{ flex: 1, height: 5, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', minWidth: 30 }}>
+    <div className="probe-partition-row">
+      <span className="probe-partition-mount" title={mount}>{mount}</span>
+      <div className="probe-partition-bar">
         <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 2 }} />
       </div>
-      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-4)', width: 38, textAlign: 'right', flexShrink: 0 }}>{size}</span>
-      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', width: 38, textAlign: 'right', flexShrink: 0 }}>{avail}</span>
-      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color, width: 32, textAlign: 'right', flexShrink: 0, fontWeight: 600 }}>{pct}%</span>
+      <span className="probe-partition-value" title={String(size)}>{formatPartitionCapacity(size)}</span>
+      <span className="probe-partition-value" title={String(avail)}>{formatPartitionCapacity(avail)}</span>
+      <span className="probe-partition-percent" style={{ color }}>{pct}%</span>
     </div>
   );
 }
@@ -103,21 +109,13 @@ function SectionHeader({ icon, title, badge, right }) {
 
 // ── Format helpers ─────────────────────────────────────────────────────────
 const fmem = (mb) => {
-  if (mb == null || mb === 0) return '0M';
-  if (mb < 1024) return `${mb.toFixed(0)}M`;
-  return `${(mb / 1024).toFixed(1)}G`;
+  return formatCapacity(mb, 1);
 };
 const fspeed = (kb) => {
-  if (!kb || kb === 0) return '0 B/s';
-  if (kb < 1) return `${(kb * 1024).toFixed(0)} B/s`;
-  if (kb < 1024) return `${kb.toFixed(1)} KB/s`;
-  return `${(kb / 1024).toFixed(2)} MB/s`;
+  return formatRate(kb);
 };
 const ftotal = (mb) => {
-  if (mb == null) return '0 B';
-  if (mb < 1) return `${(mb * 1024).toFixed(0)} KB`;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  return `${(mb / 1024).toFixed(2)} GB`;
+  return formatTransferTotal(mb);
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -351,7 +349,7 @@ export default function ProbePanel({ sessionId, addToast, enabled, onEnable }) {
 
       {/* ── 磁盘 ── */}
       <Card>
-        <SectionHeader icon="🗄" title="磁盘" badge={`${info.diskUsed?.toFixed(1)}G / ${info.diskTotal?.toFixed(1)}G`} />
+        <SectionHeader icon="🗄" title="磁盘" badge={`${formatCapacity(info.diskUsed, 1)} / ${formatCapacity(info.diskTotal, 1)}`} />
         {/* Root partition info */}
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 7 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', marginRight: 5 }} />
@@ -372,12 +370,12 @@ export default function ProbePanel({ sessionId, addToast, enabled, onEnable }) {
           ))}
         </div>
         {/* Partition table header */}
-        <div style={{ display: 'flex', gap: 6, padding: '0 0 3px 0', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 11.5, color: 'var(--text-4)', fontWeight: 700, width: 62, flexShrink: 0 }}>挂载</span>
-          <span style={{ flex: 1, fontSize: 11.5, color: 'var(--text-4)', fontWeight: 700 }}></span>
-          <span style={{ fontSize: 11.5, color: 'var(--text-4)', fontWeight: 700, width: 38, textAlign: 'right', flexShrink: 0 }}>大小</span>
-          <span style={{ fontSize: 11.5, color: 'var(--text-4)', fontWeight: 700, width: 38, textAlign: 'right', flexShrink: 0 }}>可用</span>
-          <span style={{ fontSize: 11.5, color: 'var(--text-4)', fontWeight: 700, width: 32, textAlign: 'right', flexShrink: 0 }}>已用%</span>
+        <div className="probe-partition-header">
+          <span>挂载</span>
+          <span></span>
+          <span>大小</span>
+          <span>可用</span>
+          <span>已用%</span>
         </div>
         {(info.diskPartitions?.length > 0
           ? info.diskPartitions.slice(0, 4)

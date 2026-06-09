@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { EventsOn } from '../../wailsjs/runtime/runtime.js';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import { useTranslation } from '../i18n.js';
 
@@ -7,29 +8,49 @@ export default function CommandHistory({ sessionId, addToast }) {
   const [history, setHistory] = useState([]);
 
   useEffect(() => {
-    // 每次挂载时，尝试从 localStorage 恢复该会话的历史（可选）
     try {
       const saved = localStorage.getItem(`cmd_history_${sessionId}`);
       if (saved) {
         setHistory(JSON.parse(saved));
       }
-    } catch (e) {}
+    } catch (_) {}
 
-    const handleNewCommand = (e) => {
-      const { sessionId: evSessionId, command, time } = e.detail;
+    const persistHistory = (entries) => {
+      try {
+        localStorage.setItem(`cmd_history_${sessionId}`, JSON.stringify(entries.slice(0, 100)));
+      } catch (_) {}
+    };
+
+    const pushHistoryEntry = (detail) => {
+      const { sessionId: evSessionId, command, time, source = 'input' } = detail || {};
       if (evSessionId !== sessionId) return;
+      if (!command || !String(command).trim()) return;
 
-      setHistory(prev => {
-        const newHistory = [{ id: Date.now() + Math.random(), command, time }, ...prev];
-        // 持久化当前会话历史
-        try { localStorage.setItem(`cmd_history_${sessionId}`, JSON.stringify(newHistory.slice(0, 100))); } catch (_) {}
-        return newHistory.slice(0, 100); // 最多保存100条
+      setHistory((prev) => {
+        if (source === 'remote' && prev[0]?.source === 'input' && prev[0]?.command === command) {
+          const updated = [{ ...prev[0], time, source }, ...prev.slice(1)];
+          persistHistory(updated);
+          return updated;
+        }
+
+        const newHistory = [{ id: Date.now() + Math.random(), command, time, source }, ...prev].slice(0, 100);
+        persistHistory(newHistory);
+        return newHistory;
       });
     };
 
+    const handleNewCommand = (e) => {
+      pushHistoryEntry(e.detail);
+    };
+
     window.addEventListener('ssh-command-history', handleNewCommand);
+    const unbindRemote = EventsOn('ssh-command-executed', (detail) => {
+      pushHistoryEntry(detail);
+    });
+
     return () => {
       window.removeEventListener('ssh-command-history', handleNewCommand);
+      if (unbindRemote) unbindRemote();
     };
   }, [sessionId]);
 
@@ -39,7 +60,9 @@ export default function CommandHistory({ sessionId, addToast }) {
   };
 
   const handleExecute = (cmd) => {
-    // 自动在末尾追加回车符运行
+    window.dispatchEvent(new CustomEvent('ssh-command-history', {
+      detail: { sessionId, command: cmd, time: new Date().toISOString(), source: 'input' }
+    }));
     AppGo.WriteTerminal(sessionId, cmd + '\r');
     if (addToast) addToast('已发送指令到终端', 'info', 2000);
   };
@@ -67,9 +90,9 @@ export default function CommandHistory({ sessionId, addToast }) {
       {history.length === 0 ? (
         <div className="empty-state" style={{ marginTop: '10vh' }}>
           <div style={{ fontSize: 48, opacity: 0.3 }}>⌨️</div>
-          <p style={{ marginTop: 16, color: 'var(--text-2)', fontSize: 15, fontWeight: 500 }}>{t('您还没有手工输入任何命令')}</p>
+          <p style={{ marginTop: 16, color: 'var(--text-2)', fontSize: 15, fontWeight: 500 }}>{t('您还没有执行过任何命令')}</p>
           <span style={{ fontSize: 13, color: 'var(--text-4)', maxWidth: 300, textAlign: 'center', lineHeight: 1.6, marginTop: 8 }}>
-            {t('在此连接的终端中手工输入并回车执行的指令将自动留存，方便您在此浏览与重复运行。')}
+            {t('在此连接的终端中执行过的命令会自动留存，方便您在此浏览与重复运行。')}
           </span>
         </div>
       ) : (
@@ -84,7 +107,7 @@ export default function CommandHistory({ sessionId, addToast }) {
                   {new Date(item.time).toLocaleTimeString()}
                 </span>
               </div>
-              
+
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 6 }}>
                 <button className="btn btn-ghost btn-sm" onClick={() => handleCopy(item.command)} style={{ fontSize: 12, padding: '4px 12px' }}>
                   📋 {t('复制')}
