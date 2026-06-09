@@ -26,17 +26,23 @@ var ErrHostKeyChanged = errors.New("host key has changed")
 
 // PendingHostKey 保存等待用户确认的主机密钥变更信息
 type PendingHostKey struct {
-	Conn         Connection
-	Hostname     string
-	NewKey       ssh.PublicKey
+	Conn           Connection
+	Hostname       string
+	NewKey         ssh.PublicKey
 	NewFingerprint string
-	OldKeys      []knownhosts.KnownKey
+	OldKeys        []knownhosts.KnownKey
+}
+
+// sshClientEntry 保存单个 SSH 连接共享的 client 和 sftp 实例
+// 同一服务器的多个终端复用同一 TCP 连接
+type sshClientEntry struct {
+	Client *ssh.Client
+	SFTP   *sftp.Client
 }
 
 type SessionData struct {
-	Client              *ssh.Client
+	ConnKey             string // 共享客户端查找键: user@host:port
 	Session             *ssh.Session
-	SFTP                *sftp.Client
 	Stdin               io.WriteCloser
 	HistoryStream       *commandHistoryStream
 	RemoteHistoryActive bool
@@ -44,148 +50,226 @@ type SessionData struct {
 
 type SSHManager struct {
 	ctx              context.Context
-	app              *App // reference to App for WebSocket output delivery
-	sessions         map[string]*SessionData
-	probeDeployed    map[string]bool            // tracks which sessions have probe.sh deployed
+	app              *App                       // reference to App for WebSocket output delivery
+	sessions         map[string]*SessionData    // terminalId -> terminal session
+	clients          map[string]*sshClientEntry // connKey -> shared client+SFTP
+	connTerminals    map[string][]string        // connKey -> terminal sessionIds
+	probeDeployed    map[string]bool            // connKey -> probe.sh deployed
 	pendingHostKeys  map[string]*PendingHostKey // sessionId -> pending host key info
+	tempAcceptedKeys map[string]bool            // fingerprint -> true (accept this time only)
 	mu               sync.Mutex
 }
 
 func NewSSHManager() *SSHManager {
 	return &SSHManager{
-		sessions:        make(map[string]*SessionData),
-		probeDeployed:   make(map[string]bool),
-		pendingHostKeys: make(map[string]*PendingHostKey),
+		sessions:         make(map[string]*SessionData),
+		clients:          make(map[string]*sshClientEntry),
+		connTerminals:    make(map[string][]string),
+		probeDeployed:    make(map[string]bool),
+		pendingHostKeys:  make(map[string]*PendingHostKey),
+		tempAcceptedKeys: make(map[string]bool),
 	}
 }
 
 func (m *SSHManager) Connect(sessionId string, conn Connection) error {
+	connKey := fmt.Sprintf("%s@%s:%d", conn.Username, conn.Host, conn.Port)
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	existingEntry, clientExists := m.clients[connKey]
+	m.mu.Unlock()
 
-	// Setup auth methods
-	var authMethods []ssh.AuthMethod
-	if conn.AuthMethod == "password" {
-		authMethods = append(authMethods, ssh.Password(conn.Password))
-		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
-			answers = make([]string, len(questions))
-			for i := range answers {
-				answers[i] = conn.Password
-			}
-			return answers, nil
-		}))
-	} else if conn.AuthMethod == "privateKey" {
-		var signer ssh.Signer
-		var err error
-		if conn.Passphrase != "" {
-			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(conn.PrivateKey), []byte(conn.Passphrase))
-		} else {
-			signer, err = ssh.ParsePrivateKey([]byte(conn.PrivateKey))
-		}
-		if err != nil {
-			return fmt.Errorf("invalid private key: %v", err)
-		}
-		authMethods = append(authMethods, ssh.PublicKeys(signer))
-	}
+	var client *ssh.Client
+	var sftpClient *sftp.Client
 
-	knownHostsPath := filepath.Join(os.Getenv("USERPROFILE"), ".ssh", "known_hosts")
-	os.MkdirAll(filepath.Dir(knownHostsPath), 0700)
-	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
-		os.WriteFile(knownHostsPath, []byte(""), 0600)
-	}
-
-	hostKeyCallback, err := knownhosts.New(knownHostsPath)
-	if err != nil {
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
-	}
-
-	customHostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		err := hostKeyCallback(hostname, remote, key)
-		if err == nil {
-			return nil
-		}
-		
-		var keyErr *knownhosts.KeyError
-		if errors.As(err, &keyErr) {
-			if len(keyErr.Want) == 0 {
-				// 新主机，自动信任
-				f, fErr := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_WRONLY, 0600)
-				if fErr == nil {
-					defer f.Close()
-					line := knownhosts.Line([]string{hostname}, key)
-					f.WriteString(line + "\n")
+	if clientExists {
+		client = existingEntry.Client
+		sftpClient = existingEntry.SFTP
+	} else {
+		// Setup auth methods
+		var authMethods []ssh.AuthMethod
+		if conn.AuthMethod == "password" {
+			authMethods = append(authMethods, ssh.Password(conn.Password))
+			authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+				answers = make([]string, len(questions))
+				for i := range answers {
+					answers[i] = conn.Password
 				}
-				return nil
+				return answers, nil
+			}))
+		} else if conn.AuthMethod == "privateKey" {
+			var signer ssh.Signer
+			var err error
+			if conn.Passphrase != "" {
+				signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(conn.PrivateKey), []byte(conn.Passphrase))
 			} else {
-				// 密钥已变更，需要用户确认
-				fingerprint := ssh.FingerprintSHA256(key)
-				m.pendingHostKeys[sessionId] = &PendingHostKey{
-					Conn:            conn,
-					Hostname:        hostname,
-					NewKey:          key,
-					NewFingerprint:  fingerprint,
-					OldKeys:         keyErr.Want,
-				}
-				return ErrHostKeyChanged
+				signer, err = ssh.ParsePrivateKey([]byte(conn.PrivateKey))
 			}
-		}
-		return err
-	}
-
-	config := &ssh.ClientConfig{
-		User:            conn.Username,
-		Auth:            authMethods,
-		HostKeyCallback: customHostKeyCallback,
-		Timeout:         10 * time.Second,
-		HostKeyAlgorithms: []string{
-			"ssh-ed25519",
-			"ecdsa-sha2-nistp256",
-			"ecdsa-sha2-nistp384",
-			"ecdsa-sha2-nistp521",
-			"rsa-sha2-512",
-			"rsa-sha2-256",
-			"ssh-rsa",
-			"ssh-dss",
-		},
-	}
-
-	target := fmt.Sprintf("%s:%d", strings.TrimSpace(conn.Host), conn.Port)
-	client, err := ssh.Dial("tcp", target, config)
-	if err != nil {
-		// 如果是主机密钥变更，发出事件通知前端
-		if errors.Is(err, ErrHostKeyChanged) {
-			if m.ctx != nil {
-				pending := m.pendingHostKeys[sessionId]
-				oldFingerprints := make([]string, 0, len(pending.OldKeys))
-				for _, k := range pending.OldKeys {
-					oldFingerprints = append(oldFingerprints, ssh.FingerprintSHA256(k.Key))
-				}
-				runtime.EventsEmit(m.ctx, "ssh-host-key-changed", map[string]interface{}{
-					"sessionId":     sessionId,
-					"hostname":      pending.Hostname,
-					"host":          conn.Host,
-					"port":          conn.Port,
-					"newFingerprint": pending.NewFingerprint,
-					"oldFingerprints": oldFingerprints,
-				})
+			if err != nil {
+				return fmt.Errorf("invalid private key: %v", err)
 			}
-			return fmt.Errorf("主机密钥已变更，请在弹窗中确认")
+			authMethods = append(authMethods, ssh.PublicKeys(signer))
 		}
-		return err
+
+		knownHostsPath := filepath.Join(os.Getenv("USERPROFILE"), ".ssh", "known_hosts")
+		os.MkdirAll(filepath.Dir(knownHostsPath), 0700)
+		if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
+			os.WriteFile(knownHostsPath, []byte(""), 0600)
+		}
+
+		hostKeyCallback, err := knownhosts.New(knownHostsPath)
+		if err != nil {
+			hostKeyCallback = ssh.InsecureIgnoreHostKey()
+		}
+
+		customHostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			err := hostKeyCallback(hostname, remote, key)
+			if err == nil {
+				return nil
+			}
+
+			var keyErr *knownhosts.KeyError
+			if errors.As(err, &keyErr) {
+				if len(keyErr.Want) == 0 {
+					fingerprint := ssh.FingerprintSHA256(key)
+
+					// 检查是否为临时接受的密钥（仅本次连接）
+					m.mu.Lock()
+					if m.tempAcceptedKeys[fingerprint] {
+						delete(m.tempAcceptedKeys, fingerprint)
+						m.mu.Unlock()
+						return nil
+					}
+					m.mu.Unlock()
+
+					// 新主机密钥 —— 需要用户确认
+					m.pendingHostKeys[sessionId] = &PendingHostKey{
+						Conn:           conn,
+						Hostname:       hostname,
+						NewKey:         key,
+						NewFingerprint: fingerprint,
+						OldKeys:        nil, // nil 表示首次连接
+					}
+					return ErrHostKeyChanged
+				} else {
+					fingerprint := ssh.FingerprintSHA256(key)
+
+					// 检查是否为临时接受的密钥（仅本次连接）
+					m.mu.Lock()
+					if m.tempAcceptedKeys[fingerprint] {
+						delete(m.tempAcceptedKeys, fingerprint)
+						m.mu.Unlock()
+						return nil // 本次接受该密钥
+					}
+					m.mu.Unlock()
+
+					m.pendingHostKeys[sessionId] = &PendingHostKey{
+						Conn:           conn,
+						Hostname:       hostname,
+						NewKey:         key,
+						NewFingerprint: fingerprint,
+						OldKeys:        keyErr.Want,
+					}
+					return ErrHostKeyChanged
+				}
+			}
+			return err
+		}
+
+		config := &ssh.ClientConfig{
+			User:            conn.Username,
+			Auth:            authMethods,
+			HostKeyCallback: customHostKeyCallback,
+			Timeout:         10 * time.Second,
+			HostKeyAlgorithms: []string{
+				"ssh-ed25519",
+				"ecdsa-sha2-nistp256",
+				"ecdsa-sha2-nistp384",
+				"ecdsa-sha2-nistp521",
+				"rsa-sha2-512",
+				"rsa-sha2-256",
+				"ssh-rsa",
+				"ssh-dss",
+			},
+		}
+
+		target := fmt.Sprintf("%s:%d", strings.TrimSpace(conn.Host), conn.Port)
+		var dialErr error
+		client, dialErr = ssh.Dial("tcp", target, config)
+		if dialErr != nil {
+			if errors.Is(dialErr, ErrHostKeyChanged) {
+				if m.ctx != nil {
+					pending := m.pendingHostKeys[sessionId]
+					oldFingerprints := make([]string, 0, len(pending.OldKeys))
+					for _, k := range pending.OldKeys {
+						oldFingerprints = append(oldFingerprints, ssh.FingerprintSHA256(k.Key))
+					}
+					runtime.EventsEmit(m.ctx, "ssh-host-key-changed", map[string]interface{}{
+						"sessionId":       sessionId,
+						"hostname":        pending.Hostname,
+						"host":            conn.Host,
+						"port":            conn.Port,
+						"newFingerprint":  pending.NewFingerprint,
+						"oldFingerprints": oldFingerprints,
+						"isNew":           len(pending.OldKeys) == 0,
+					})
+				}
+				return fmt.Errorf("主机密钥已变更，请在弹窗中确认")
+			}
+			return dialErr
+		}
+
+		var sftpErr error
+		sftpClient, sftpErr = sftp.NewClient(client)
+		if sftpErr != nil {
+			client.Close()
+			return fmt.Errorf("failed to start SFTP: %v", sftpErr)
+		}
+
+		m.mu.Lock()
+		m.clients[connKey] = &sshClientEntry{Client: client, SFTP: sftpClient}
+		m.connTerminals[connKey] = []string{}
+		m.mu.Unlock()
+
+		go func() {
+			_ = client.Wait()
+			m.mu.Lock()
+			terminalIds := append([]string{}, m.connTerminals[connKey]...)
+			m.mu.Unlock()
+			for _, tid := range terminalIds {
+				m.mu.Lock()
+				ts, tsOk := m.sessions[tid]
+				if tsOk {
+					if ts.Stdin != nil {
+						ts.Stdin.Close()
+					}
+					if ts.Session != nil {
+						ts.Session.Close()
+					}
+					delete(m.sessions, tid)
+				}
+				m.mu.Unlock()
+				if m.ctx != nil {
+					runtime.EventsEmit(m.ctx, "ssh-disconnected", tid)
+				}
+			}
+			m.mu.Lock()
+			if entry, ok := m.clients[connKey]; ok {
+				if entry.SFTP != nil {
+					entry.SFTP.Close()
+				}
+				if entry.Client != nil {
+					entry.Client.Close()
+				}
+				delete(m.clients, connKey)
+				delete(m.connTerminals, connKey)
+				delete(m.probeDeployed, connKey)
+			}
+			m.mu.Unlock()
+		}()
 	}
 
-	// Create SFTP client
-	sftpClient, err := sftp.NewClient(client)
-	if err != nil {
-		client.Close()
-		return fmt.Errorf("failed to start SFTP: %v", err)
-	}
-
-	// Create SSH Session for PTY
 	session, err := client.NewSession()
 	if err != nil {
-		sftpClient.Close()
-		client.Close()
 		return err
 	}
 
@@ -197,34 +281,35 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 
 	if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
 		session.Close()
-		sftpClient.Close()
-		client.Close()
 		return err
 	}
 
 	stdin, err := session.StdinPipe()
 	if err != nil {
+		session.Close()
 		return err
 	}
 	stdout, err := session.StdoutPipe()
 	if err != nil {
+		session.Close()
 		return err
 	}
 	stderr, err := session.StderrPipe()
 	if err != nil {
+		session.Close()
 		return err
 	}
 
 	shellPath := detectRemoteShell(client)
 	launchCmd, remoteHistoryActive := buildShellLaunchCommand(shellPath)
 
-	// Start shell
 	if remoteHistoryActive {
 		err = session.Start(launchCmd)
 	} else {
 		err = session.Shell()
 	}
 	if err != nil {
+		session.Close()
 		return err
 	}
 
@@ -233,33 +318,19 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 		historyStream = newCommandHistoryStream()
 	}
 
+	m.mu.Lock()
 	m.sessions[sessionId] = &SessionData{
-		Client:              client,
+		ConnKey:             connKey,
 		Session:             session,
-		SFTP:                sftpClient,
 		Stdin:               stdin,
 		HistoryStream:       historyStream,
 		RemoteHistoryActive: remoteHistoryActive,
 	}
+	m.connTerminals[connKey] = append(m.connTerminals[connKey], sessionId)
+	m.mu.Unlock()
 
-	// 启动读取 stdout/stderr
 	go m.pipeOutput(sessionId, stdout, historyStream)
 	go m.pipeOutput(sessionId, stderr, nil)
-
-	// 启动后台连接意外断开监控协程
-	go func() {
-		_ = client.Wait()
-		// 检测是否已被主动移除，若未被移除，说明是意外断开
-		m.mu.Lock()
-		_, exists := m.sessions[sessionId]
-		m.mu.Unlock()
-		if exists {
-			m.CloseSessionResources(sessionId)
-			if m.ctx != nil {
-				runtime.EventsEmit(m.ctx, "ssh-disconnected", sessionId)
-			}
-		}
-	}()
 
 	return nil
 }
@@ -308,41 +379,197 @@ func (m *SSHManager) pipeOutput(sessionId string, r io.Reader, historyStream *co
 	}
 }
 
+// getClientEntry 查找 session 对应的共享客户端
+func (m *SSHManager) getClientEntry(sessionId string) (*ssh.Client, *sftp.Client, error) {
+	m.mu.Lock()
+	s, ok := m.sessions[sessionId]
+	if !ok {
+		m.mu.Unlock()
+		return nil, nil, fmt.Errorf("session not found")
+	}
+	entry, ok := m.clients[s.ConnKey]
+	m.mu.Unlock()
+	if !ok {
+		return nil, nil, fmt.Errorf("client not found for session")
+	}
+	return entry.Client, entry.SFTP, nil
+}
+
 func (m *SSHManager) Disconnect(sessionId string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if s, ok := m.sessions[sessionId]; ok {
-		// 清理异步输入事件监听
-		if m.ctx != nil {
-			runtime.EventsOff(m.ctx, "terminal-input-"+sessionId)
-		}
-		s.Stdin.Close()
-		s.Session.Close()
-		s.SFTP.Close()
-		s.Client.Close()
-		delete(m.sessions, sessionId)
+	s, ok := m.sessions[sessionId]
+	if !ok {
+		m.mu.Unlock()
+		return
 	}
+	connKey := s.ConnKey
+	if s.Stdin != nil {
+		s.Stdin.Close()
+	}
+	if s.Session != nil {
+		s.Session.Close()
+	}
+	delete(m.sessions, sessionId)
+
+	// 从 connTerminals 中移除
+	terminals := m.connTerminals[connKey]
+	for i, t := range terminals {
+		if t == sessionId {
+			m.connTerminals[connKey] = append(terminals[:i], terminals[i+1:]...)
+			break
+		}
+	}
+	// 如果是最后一个终端，关闭共享客户端
+	if len(m.connTerminals[connKey]) == 0 {
+		if entry, ok := m.clients[connKey]; ok {
+			if entry.SFTP != nil {
+				entry.SFTP.Close()
+			}
+			if entry.Client != nil {
+				entry.Client.Close()
+			}
+			delete(m.clients, connKey)
+			delete(m.connTerminals, connKey)
+			delete(m.probeDeployed, connKey)
+		}
+	}
+	m.mu.Unlock()
 }
 
 func (m *SSHManager) CloseSessionResources(sessionId string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	// 清理异步输入事件监听
-	if m.ctx != nil {
-		runtime.EventsOff(m.ctx, "terminal-input-"+sessionId)
+	s, ok := m.sessions[sessionId]
+	if !ok {
+		m.mu.Unlock()
+		return
 	}
-	if s, ok := m.sessions[sessionId]; ok {
-		if s.Stdin != nil { s.Stdin.Close() }
-		if s.Session != nil { s.Session.Close() }
-		if s.SFTP != nil { s.SFTP.Close() }
-		if s.Client != nil { s.Client.Close() }
+	connKey := s.ConnKey
+	terminalIds := append([]string{}, m.connTerminals[connKey]...)
+	m.mu.Unlock()
+
+	for _, tid := range terminalIds {
+		m.mu.Lock()
+		ts, tsOk := m.sessions[tid]
+		if tsOk {
+			if ts.Stdin != nil {
+				ts.Stdin.Close()
+			}
+			if ts.Session != nil {
+				ts.Session.Close()
+			}
+			delete(m.sessions, tid)
+		}
+		m.mu.Unlock()
 	}
+
+	m.mu.Lock()
+	if entry, ok := m.clients[connKey]; ok {
+		if entry.SFTP != nil {
+			entry.SFTP.Close()
+		}
+		if entry.Client != nil {
+			entry.Client.Close()
+		}
+		delete(m.clients, connKey)
+		delete(m.connTerminals, connKey)
+		delete(m.probeDeployed, connKey)
+	}
+	m.mu.Unlock()
+}
+
+// OpenTerminal 为已有连接创建新的终端通道
+// 复用同一个 SSH 客户端，创建新的 shell session
+func (m *SSHManager) OpenTerminal(sessionId string) (string, error) {
+	m.mu.Lock()
+	existing, ok := m.sessions[sessionId]
+	if !ok {
+		m.mu.Unlock()
+		return "", fmt.Errorf("session not found")
+	}
+	entry, ok := m.clients[existing.ConnKey]
+	if !ok {
+		m.mu.Unlock()
+		return "", fmt.Errorf("client not found for session")
+	}
+	connKey := existing.ConnKey
+	remoteHistoryActive := existing.RemoteHistoryActive
+	m.mu.Unlock()
+
+	session, err := entry.Client.NewSession()
+	if err != nil {
+		return "", err
+	}
+
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: 115200,
+		ssh.TTY_OP_OSPEED: 115200,
+	}
+
+	if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
+		session.Close()
+		return "", err
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		session.Close()
+		return "", err
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		session.Close()
+		return "", err
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		session.Close()
+		return "", err
+	}
+
+	if remoteHistoryActive {
+		shellPath := detectRemoteShell(entry.Client)
+		launchCmd, _ := buildShellLaunchCommand(shellPath)
+		if launchCmd != "" {
+			err = session.Start(launchCmd)
+		} else {
+			err = session.Shell()
+		}
+	} else {
+		err = session.Shell()
+	}
+	if err != nil {
+		session.Close()
+		return "", err
+	}
+
+	var historyStream *commandHistoryStream
+	if remoteHistoryActive {
+		historyStream = newCommandHistoryStream()
+	}
+
+	newId := fmt.Sprintf("term_%d", time.Now().UnixNano())
+
+	m.mu.Lock()
+	m.sessions[newId] = &SessionData{
+		ConnKey:             connKey,
+		Session:             session,
+		Stdin:               stdin,
+		HistoryStream:       historyStream,
+		RemoteHistoryActive: remoteHistoryActive,
+	}
+	m.connTerminals[connKey] = append(m.connTerminals[connKey], newId)
+	m.mu.Unlock()
+
+	go m.pipeOutput(newId, stdout, historyStream)
+	go m.pipeOutput(newId, stderr, nil)
+
+	return newId, nil
 }
 
 // AcceptHostKeyChange 处理用户对主机密钥变更的确认
-// accept=true: 更新 known_hosts 文件并自动重连
-// accept=false: 清除待处理记录
-func (m *SSHManager) AcceptHostKeyChange(sessionId string, accept bool) error {
+// action: 0=取消, 1=仅本次接受, 2=接受并保存至 known_hosts
+func (m *SSHManager) AcceptHostKeyChange(sessionId string, action int) error {
 	m.mu.Lock()
 	pending, exists := m.pendingHostKeys[sessionId]
 	if !exists {
@@ -352,65 +579,76 @@ func (m *SSHManager) AcceptHostKeyChange(sessionId string, accept bool) error {
 	delete(m.pendingHostKeys, sessionId)
 	m.mu.Unlock()
 
-	if !accept {
-		return fmt.Errorf("用户取消了主机密钥更新")
-	}
+	switch action {
+	case 0: // 取消
+		return fmt.Errorf("用户取消了主机密钥验证")
 
-	// 更新 known_hosts: 删除旧密钥行，添加新密钥行
-	knownHostsPath := filepath.Join(os.Getenv("USERPROFILE"), ".ssh", "known_hosts")
-	os.MkdirAll(filepath.Dir(knownHostsPath), 0700)
+	case 1: // 仅本次接受 —— 不写 known_hosts，仅临时放行
+		m.mu.Lock()
+		m.tempAcceptedKeys[pending.NewFingerprint] = true
+		m.mu.Unlock()
+		return m.Connect(sessionId, pending.Conn)
 
-	// 读取现有内容并过滤掉旧密钥行
-	data, err := os.ReadFile(knownHostsPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("无法读取 known_hosts: %v", err)
-	}
+	case 2: // 接受并保存到 known_hosts
+		knownHostsPath := filepath.Join(os.Getenv("USERPROFILE"), ".ssh", "known_hosts")
+		os.MkdirAll(filepath.Dir(knownHostsPath), 0700)
 
-	var newLines []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			newLines = append(newLines, line)
-			continue
-		}
-		// 检查该行是否匹配任意一个旧密钥
-		isOld := false
-		for _, oldKey := range pending.OldKeys {
-			if strings.Contains(line, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(oldKey.Key)))) {
-				isOld = true
-				break
+		newLine := knownhosts.Line([]string{pending.Hostname}, pending.NewKey)
+
+		if len(pending.OldKeys) > 0 {
+			// 密钥已变更：删除旧条目后追加新条目
+			data, err := os.ReadFile(knownHostsPath)
+			if err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("无法读取 known_hosts: %v", err)
 			}
+
+			var newLines []string
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					newLines = append(newLines, line)
+					continue
+				}
+				isOld := false
+				for _, oldKey := range pending.OldKeys {
+					if strings.Contains(line, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(oldKey.Key)))) {
+						isOld = true
+						break
+					}
+				}
+				if !isOld {
+					newLines = append(newLines, line)
+				}
+			}
+			newLines = append(newLines, newLine)
+
+			if err := os.WriteFile(knownHostsPath, []byte(strings.Join(newLines, "\n")+"\n"), 0600); err != nil {
+				return fmt.Errorf("无法写入 known_hosts: %v", err)
+			}
+		} else {
+			// 首次连接：直接追加新条目
+			f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+			if err != nil {
+				return fmt.Errorf("无法写入 known_hosts: %v", err)
+			}
+			defer f.Close()
+			f.WriteString(newLine + "\n")
 		}
-		if !isOld {
-			newLines = append(newLines, line)
-		}
+
+		return m.Connect(sessionId, pending.Conn)
+
+	default:
+		return fmt.Errorf("无效的操作")
 	}
-
-	// 追加新密钥
-	newLine := knownhosts.Line([]string{pending.Hostname}, pending.NewKey)
-	newLines = append(newLines, newLine)
-
-	if err := os.WriteFile(knownHostsPath, []byte(strings.Join(newLines, "\n")+"\n"), 0600); err != nil {
-		return fmt.Errorf("无法写入 known_hosts: %v", err)
-	}
-
-	// 自动重连
-	return m.Connect(sessionId, pending.Conn)
 }
 
 func (m *SSHManager) GetTerminalCwd(sessionId string) (string, error) {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return "", fmt.Errorf("session not found")
+	client, _, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return "", err
 	}
 
-	if s.Client == nil {
-		return "", fmt.Errorf("client connection is nil")
-	}
-
-	localAddr := s.Client.LocalAddr().String()
+	localAddr := client.LocalAddr().String()
 	parts := strings.Split(localAddr, ":")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("invalid local address format")
@@ -419,7 +657,7 @@ func (m *SSHManager) GetTerminalCwd(sessionId string) (string, error) {
 
 	cmd := fmt.Sprintf(`PORT=%s; SSHD_PID=$(ss -ntp 2>/dev/null | grep ":$PORT " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -n1); [ -z "$SSHD_PID" ] && SSHD_PID=$(netstat -ntp 2>/dev/null | grep ":$PORT " | grep -oE '[0-9]+/sshd' | cut -d/ -f1 | head -n1); if [ -n "$SSHD_PID" ]; then SHELL_PID=$(pgrep -P $SSHD_PID | head -n1); fi; [ -z "$SHELL_PID" ] && SHELL_PID=$(pgrep -u $USER -f "sh|bash|zsh" | tail -n1); if [ -n "$SHELL_PID" ]; then readlink /proc/$SHELL_PID/cwd 2>/dev/null || echo "/"; else echo "/"; fi`, port)
 
-	out, err := m.executeCmd(s, cmd)
+	out, err := m.executeCmdWithClient(client, cmd)
 	if err != nil {
 		return "", err
 	}
@@ -449,9 +687,9 @@ func (m *SSHManager) Resize(sessionId string, cols, rows int) {
 	}
 }
 
-// executeCmd executes a command on a separate temporary session to avoid blocking the main PTY
-func (m *SSHManager) executeCmd(s *SessionData, cmd string) (string, error) {
-	session, err := s.Client.NewSession()
+// executeCmdWithClient executes a command on a separate temporary session using the given client
+func (m *SSHManager) executeCmdWithClient(client *ssh.Client, cmd string) (string, error) {
+	session, err := client.NewSession()
 	if err != nil {
 		return "", err
 	}
@@ -560,27 +798,23 @@ echo ---DONE---
 `
 
 // deployProbeScript writes probe.sh to ~/.aether/ on the remote server via SFTP.
-// It is idempotent: if already deployed for this session it returns immediately.
-func (m *SSHManager) deployProbeScript(s *SessionData, sessionId string) error {
+func (m *SSHManager) deployProbeScript(sftpClient *sftp.Client, connKey string) error {
 	m.mu.Lock()
-	already := m.probeDeployed[sessionId]
+	already := m.probeDeployed[connKey]
 	m.mu.Unlock()
 	if already {
 		return nil
 	}
 
-	// Ensure ~/.aether directory exists
-	if err := s.SFTP.MkdirAll(".aether"); err != nil {
-		// Non-fatal: fall back to /tmp/.aether
-		_ = s.SFTP.MkdirAll("/tmp/.aether")
+	if err := sftpClient.MkdirAll(".aether"); err != nil {
+		_ = sftpClient.MkdirAll("/tmp/.aether")
 	}
 
-	// Write the script file
 	scriptPath := ".aether/probe.sh"
-	f, err := s.SFTP.Create(scriptPath)
+	f, err := sftpClient.Create(scriptPath)
 	if err != nil {
 		scriptPath = "/tmp/.aether/probe.sh"
-		f, err = s.SFTP.Create(scriptPath)
+		f, err = sftpClient.Create(scriptPath)
 		if err != nil {
 			return fmt.Errorf("cannot write probe script: %v", err)
 		}
@@ -591,28 +825,32 @@ func (m *SSHManager) deployProbeScript(s *SessionData, sessionId string) error {
 		return err
 	}
 
-	// Make executable
-	_ = s.SFTP.Chmod(scriptPath, 0755)
+	_ = sftpClient.Chmod(scriptPath, 0755)
 
 	m.mu.Lock()
-	m.probeDeployed[sessionId] = true
+	m.probeDeployed[connKey] = true
 	m.mu.Unlock()
 	return nil
 }
 
 func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, error) {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("session not found")
+	client, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return nil, err
 	}
 
-	// Deploy probe script to ~/.aether/probe.sh (once per session, idempotent)
-	_ = m.deployProbeScript(s, sessionId)
+	m.mu.Lock()
+	s, ok := m.sessions[sessionId]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("session not found")
+	}
+	connKey := s.ConnKey
+	m.mu.Unlock()
 
-	// Execute the deployed script
-	out, err := m.executeCmd(s, `sh -c 'f=~/.aether/probe.sh; [ -f "$f" ] && sh "$f" || sh /tmp/.aether/probe.sh'`)
+	_ = m.deployProbeScript(sftpClient, connKey)
+
+	out, err := m.executeCmdWithClient(client, `sh -c 'f=~/.aether/probe.sh; [ -f "$f" ] && sh "$f" || sh /tmp/.aether/probe.sh'`)
 	if err != nil || len(strings.TrimSpace(out)) == 0 {
 		return nil, fmt.Errorf("probe script execution failed")
 	}
@@ -696,9 +934,9 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 	var diskPercent float64
 	diskDevice := "disk"
 	type partition struct {
-		Mount  string
-		Size   string
-		Avail  string
+		Mount   string
+		Size    string
+		Avail   string
 		UsedPct int
 	}
 	var partitions []partition
@@ -793,9 +1031,9 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 				}
 				return 0
 			}
-			userN := getU(0) + getU(1)              // user + nice
+			userN := getU(0) + getU(1)                    // user + nice
 			sysN := getU(2) + getU(5) + getU(6) + getU(7) // system + irq + softirq + steal
-			idleN := getU(3) + getU(4)             // idle + iowait
+			idleN := getU(3) + getU(4)                    // idle + iowait
 			total := userN + sysN + idleN
 			res[parts[0]] = []uint64{userN, sysN, idleN, total}
 		}
@@ -953,10 +1191,10 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 		cpu, _ := strconv.ParseFloat(fields[1], 64)
 		rss, _ := strconv.ParseUint(fields[2], 10, 64)
 		processes = append(processes, map[string]interface{}{
-			"pid":  fields[0],
-			"cpu":  cpu,
-			"mem":  float64(rss) / 1024.0, // MB
-			"cmd":  fields[3],
+			"pid": fields[0],
+			"cpu": cpu,
+			"mem": float64(rss) / 1024.0, // MB
+			"cmd": fields[3],
 		})
 	}
 
@@ -996,7 +1234,6 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 	}, nil
 }
 
-
 // SFTP Methods
 
 func formatFileMode(mode os.FileMode) string {
@@ -1004,14 +1241,12 @@ func formatFileMode(mode os.FileMode) string {
 }
 
 func (m *SSHManager) ListDir(sessionId string, path string) ([]map[string]interface{}, error) {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("session not found")
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return nil, err
 	}
 
-	files, err := s.SFTP.ReadDir(path)
+	files, err := sftpClient.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1026,7 +1261,6 @@ func (m *SSHManager) ListDir(sessionId string, path string) ([]map[string]interf
 			"rights":      map[string]string{"user": formatFileMode(f.Mode())},
 		})
 	}
-	// 文件夹在前，文件在后，同类按名称排序
 	sort.Slice(results, func(i, j int) bool {
 		iDir := results[i]["isDirectory"].(bool)
 		jDir := results[j]["isDirectory"].(bool)
@@ -1039,14 +1273,12 @@ func (m *SSHManager) ListDir(sessionId string, path string) ([]map[string]interf
 }
 
 func (m *SSHManager) ReadFile(sessionId string, path string) (string, error) {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return "", fmt.Errorf("session not found")
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return "", err
 	}
 
-	f, err := s.SFTP.Open(path)
+	f, err := sftpClient.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -1060,14 +1292,12 @@ func (m *SSHManager) ReadFile(sessionId string, path string) (string, error) {
 }
 
 func (m *SSHManager) WriteFile(sessionId string, path string, content string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
 	}
 
-	f, err := s.SFTP.Create(path)
+	f, err := sftpClient.Create(path)
 	if err != nil {
 		return err
 	}
@@ -1078,38 +1308,31 @@ func (m *SSHManager) WriteFile(sessionId string, path string, content string) er
 }
 
 func (m *SSHManager) DeleteItem(sessionId string, path string, isDir bool) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
-	}
-	if isDir {
-		// Use rm -rf for non-empty directories to simulate recursive delete
-		_, err := m.executeCmd(s, fmt.Sprintf("rm -rf '%s'", strings.ReplaceAll(path, "'", "'\\''")))
+	client, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
 		return err
 	}
-	return s.SFTP.Remove(path)
+	if isDir {
+		_, err := m.executeCmdWithClient(client, fmt.Sprintf("rm -rf '%s'", strings.ReplaceAll(path, "'", "'\\''")))
+		return err
+	}
+	return sftpClient.Remove(path)
 }
 
 func (m *SSHManager) Mkdir(sessionId string, path string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
 	}
-	return s.SFTP.MkdirAll(path)
+	return sftpClient.MkdirAll(path)
 }
 
 func (m *SSHManager) RenameItem(sessionId string, oldPath string, newPath string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
 	}
-	return s.SFTP.Rename(oldPath, newPath)
+	return sftpClient.Rename(oldPath, newPath)
 }
 
 // progressReader wraps an io.Reader and emits progress events via Wails.
@@ -1131,7 +1354,9 @@ func (p *progressReader) Read(data []byte) (int, error) {
 			pct := float64(0)
 			if p.total > 0 {
 				pct = float64(p.current) / float64(p.total) * 100
-				if pct > 100 { pct = 100 }
+				if pct > 100 {
+					pct = 100
+				}
 			}
 			if p.ctx != nil {
 				runtime.EventsEmit(p.ctx, "transfer-progress-"+p.sessionId, pct)
@@ -1143,11 +1368,9 @@ func (p *progressReader) Read(data []byte) (int, error) {
 }
 
 func (m *SSHManager) UploadFile(sessionId string, localPath string, remotePath string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
 	}
 
 	src, err := os.Open(localPath)
@@ -1157,7 +1380,7 @@ func (m *SSHManager) UploadFile(sessionId string, localPath string, remotePath s
 	defer src.Close()
 
 	destPath := filepath.ToSlash(filepath.Join(remotePath, filepath.Base(localPath)))
-	dst, err := s.SFTP.Create(destPath)
+	dst, err := sftpClient.Create(destPath)
 	if err != nil {
 		return err
 	}
@@ -1176,20 +1399,18 @@ func (m *SSHManager) UploadFile(sessionId string, localPath string, remotePath s
 		lastEmit:  time.Now(),
 	}
 
-	buf := make([]byte, 2*1024*1024) // 2MB buffer
+	buf := make([]byte, 2*1024*1024)
 	_, err = io.CopyBuffer(dst, pr, buf)
 	return err
 }
 
 func (m *SSHManager) DownloadFile(sessionId string, remotePath string, localPath string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
 	}
 
-	src, err := s.SFTP.Open(remotePath)
+	src, err := sftpClient.Open(remotePath)
 	if err != nil {
 		return err
 	}
@@ -1214,17 +1435,15 @@ func (m *SSHManager) DownloadFile(sessionId string, remotePath string, localPath
 		lastEmit:  time.Now(),
 	}
 
-	buf := make([]byte, 2*1024*1024) // 2MB buffer
+	buf := make([]byte, 2*1024*1024)
 	_, err = io.CopyBuffer(dst, pr, buf)
 	return err
 }
 
 func (m *SSHManager) CompressItem(sessionId string, remotePath string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
+	client, _, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
 	}
 
 	dir := filepath.Dir(remotePath)
@@ -1233,8 +1452,8 @@ func (m *SSHManager) CompressItem(sessionId string, remotePath string) error {
 
 	dir = strings.ReplaceAll(dir, "\\", "/")
 	cmd := fmt.Sprintf("cd '%s' && tar -czf '%s' '%s'", dir, archiveName, base)
-	
-	out, err := m.executeCmd(s, cmd)
+
+	out, err := m.executeCmdWithClient(client, cmd)
 	if err != nil {
 		return fmt.Errorf("compress failed: %v, output: %s", err, out)
 	}
@@ -1242,17 +1461,15 @@ func (m *SSHManager) CompressItem(sessionId string, remotePath string) error {
 }
 
 func (m *SSHManager) UncompressItem(sessionId string, remotePath string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[sessionId]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("session not found")
+	client, _, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
 	}
 
 	dir := filepath.Dir(remotePath)
 	base := filepath.Base(remotePath)
 	dir = strings.ReplaceAll(dir, "\\", "/")
-	
+
 	var cmd string
 	lowerBase := strings.ToLower(base)
 	if strings.HasSuffix(lowerBase, ".zip") {
@@ -1269,7 +1486,7 @@ func (m *SSHManager) UncompressItem(sessionId string, remotePath string) error {
 		return fmt.Errorf("unsupported archive format")
 	}
 
-	out, err := m.executeCmd(s, cmd)
+	out, err := m.executeCmdWithClient(client, cmd)
 	if err != nil {
 		return fmt.Errorf("uncompress failed: %v, output: %s", err, out)
 	}

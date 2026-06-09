@@ -163,11 +163,15 @@ func (a *App) DisconnectSSH(sessionId string) {
 	a.sshManager.Disconnect(sessionId)
 }
 
-// AcceptHostKeyChange 用户确认是否接受变更后的主机密钥
-// accept=true: 更新 known_hosts 并自动重连
-// accept=false: 拒绝连接
-func (a *App) AcceptHostKeyChange(sessionId string, accept bool) error {
-	return a.sshManager.AcceptHostKeyChange(sessionId, accept)
+// AcceptHostKeyChange 用户确认主机密钥变更
+// action: 0=取消, 1=仅本次接受, 2=接受并保存
+func (a *App) AcceptHostKeyChange(sessionId string, action int) error {
+	return a.sshManager.AcceptHostKeyChange(sessionId, action)
+}
+
+// OpenTerminal 在当前服务器连接上打开新的终端标签页
+func (a *App) OpenTerminal(sessionId string) (string, error) {
+	return a.sshManager.OpenTerminal(sessionId)
 }
 
 // WriteTerminal sends input to the SSH PTY (fallback, primary path is WebSocket)

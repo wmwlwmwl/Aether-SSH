@@ -41,6 +41,19 @@ export default function GlobalDialog() {
             onCancel: () => resolve(null)
           }]);
         });
+      },
+      choice: (message, title, buttons) => {
+        return new Promise((resolve) => {
+          setDialogs(prev => [...prev, {
+            id: Date.now() + Math.random(),
+            type: 'choice',
+            title,
+            message,
+            buttons,
+            onChoice: (val) => resolve(val),
+            onClose: () => resolve(null)
+          }]);
+        });
       }
     };
     return () => {
@@ -63,14 +76,19 @@ export default function GlobalDialog() {
     setDialogs(prev => prev.slice(1));
   };
 
+  const handleChoice = (val) => {
+    if (current.onChoice) current.onChoice(val);
+    setDialogs(prev => prev.slice(1));
+  };
+
   return (
     <div className="modal-overlay" style={{ zIndex: 9999 }}>
-      <DialogContent current={current} onClose={handleClose} onConfirm={handleConfirm} />
+      <DialogContent current={current} onClose={handleClose} onConfirm={handleConfirm} onChoice={handleChoice} />
     </div>
   );
 }
 
-function DialogContent({ current, onClose, onConfirm }) {
+function DialogContent({ current, onClose, onConfirm, onChoice }) {
   const [inputValue, setInputValue] = useState(current.defaultValue || '');
 
   return (
@@ -78,7 +96,7 @@ function DialogContent({ current, onClose, onConfirm }) {
       <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-1)', marginBottom: 16 }}>
         {current.title}
       </div>
-      <div style={{ fontSize: 14, color: 'var(--text-3)', marginBottom: 28, lineHeight: 1.6, wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+      <div style={{ fontSize: 14, color: 'var(--text-3)', marginBottom: 28, lineHeight: 1.6, wordBreak: 'break-word', overflowWrap: 'anywhere', whiteSpace: current.type === 'choice' ? 'pre-wrap' : undefined, textAlign: current.type === 'choice' ? 'left' : undefined }}>
         {current.message}
       </div>
       
@@ -96,6 +114,20 @@ function DialogContent({ current, onClose, onConfirm }) {
         />
       )}
 
+      {current.type === 'choice' ? (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+          {current.buttons.map((btn, i) => (
+            <button
+              key={i}
+              className={btn.primary ? 'btn btn-primary' : btn.secondary ? 'btn btn-secondary' : 'btn btn-secondary'}
+              onClick={() => onChoice(btn.value)}
+              style={{ flex: 1, padding: '10px 0', justifyContent: 'center', whiteSpace: 'nowrap' }}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
+      ) : (
       <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
         {current.type !== 'alert' && (
           <button className="btn btn-secondary" onClick={onClose} style={{ flex: 1, padding: '10px 0', justifyContent: 'center' }}>取消</button>
@@ -111,7 +143,7 @@ function DialogContent({ current, onClose, onConfirm }) {
         >
           {current.type === 'alert' ? '我知道了' : '确定'}
         </button>
-      </div>
+      </div>)}
     </div>
   );
 }

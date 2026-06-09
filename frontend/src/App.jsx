@@ -24,6 +24,7 @@ export default function App() {
   const [pings, setPings] = useState({});
   const [sessions, setSessions] = useState([]);      // { id, serverId, serverName, host, status, osInfo }
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const [activeTerminalId, setActiveTerminalId] = useState(null);
   const [contentTab, setContentTab] = useState('terminal'); // 'terminal' | 'files'
   const [showAddServer, setShowAddServer] = useState(false);
   const [editServer, setEditServer] = useState(null);
@@ -316,10 +317,12 @@ export default function App() {
       serverName: tempServer.name,
       host: tempServer.host,
       status: 'connecting',
+      terminals: [{ id: sessionId, label: '终端1' }],
     };
 
     setSessions((prev) => [...prev, newSession]);
     setActiveSessionId(sessionId);
+    setActiveTerminalId(sessionId);
     setContentTab('terminal');
     // 显示连接进度卡片
     setConnectingServer({ server: tempServer, sessionId, startTime: Date.now() });
@@ -491,9 +494,19 @@ export default function App() {
   // ── 监听 SSH 意外断开事件 ────────────────────────────────────
   useEffect(() => {
     const unbind = EventsOn('ssh-disconnected', (sessionId) => {
-      setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: 'closed' } : s))
-      );
+      setSessions((prev) => {
+        // 检查是否是服务器级别的 session
+        const serverSession = prev.find(s => s.id === sessionId);
+        if (serverSession) {
+          return prev.map((s) => (s.id === sessionId ? { ...s, status: 'closed' } : s));
+        }
+        // 检查是否是子终端
+        const parent = prev.find(s => s.terminals?.some(t => t.id === sessionId));
+        if (parent) {
+          return prev.map((s) => (s.id === parent.id ? { ...s, status: 'closed' } : s));
+        }
+        return prev;
+      });
       addToast('SSH 连接已意外断开', 'error', 4000);
     });
     return () => {
@@ -505,43 +518,62 @@ export default function App() {
   useEffect(() => {
     const unbind = EventsOn('ssh-host-key-changed', async (data) => {
       const {
-        sessionId, hostname, host, port, newFingerprint, oldFingerprints
+        sessionId, hostname, host, port, newFingerprint, oldFingerprints, isNew
       } = data;
 
       const oldFpList = (oldFingerprints || []).join('\n');
-      const msg = [
-        `远程主机密钥已变更，可能存在中间人攻击！`,
-        ``,
-        `主机: ${host}:${port}`,
-        ``,
-        `新密钥指纹:`,
-        `${newFingerprint}`,
-        ``,
-        `旧密钥指纹:`,
-        `${oldFpList}`,
-        ``,
-        `如果确认这是预期的变更（如服务器重装），点击"更新并连接"。`,
-        `如果不确定，点击"取消"中止连接。`,
-      ].join('\n');
+      const msg = isNew
+        ? [
+            `首次连接到此主机，请确认密钥指纹：`,
+            ``,
+            `主机: ${host}:${port}`,
+            ``,
+            `密钥指纹:`,
+            `${newFingerprint}`,
+            ``,
+            `如果指纹与服务器管理员提供的匹配，点击"接受并保存"。`,
+          ].join('\n')
+        : [
+            `远程主机密钥已变更，可能存在中间人攻击！`,
+            ``,
+            `主机: ${host}:${port}`,
+            ``,
+            `新密钥指纹:`,
+            `${newFingerprint}`,
+            ``,
+            `旧密钥指纹:`,
+            `${oldFpList}`,
+            ``,
+            `如果确认这是预期的变更（如服务器重装），点击"接受并保存"。`,
+          ].join('\n');
 
-      const accepted = await window.aetherDialog?.confirm?.(
+      const action = await window.aetherDialog?.choice?.(
         msg,
-        '⚠️ 主机密钥已变更'
+        isNew ? '🔑 主机密钥确认' : '⚠️ 主机密钥已变更',
+        [
+          { label: '只接受本次', value: 1, secondary: true },
+          { label: '接受并保存', value: 2, primary: true },
+          { label: '取消', value: 0, secondary: true },
+        ]
       );
 
+      // action: 0/取消或null → 取消连接, 1 → 仅本次, 2 → 保存
+      const chosen = action ?? 0;
+
       try {
-        await AppGo.AcceptHostKeyChange(sessionId, accepted);
-        if (accepted) {
-          // 更新 known_hosts 后重连成功
+        await AppGo.AcceptHostKeyChange(sessionId, chosen);
+        if (chosen >= 1) {
           setSessions((prev) =>
             prev.map((s) =>
               s.id === sessionId ? { ...s, status: 'connected' } : s
             )
           );
           setConnectingServer(null);
-          addToast('主机密钥已更新，连接成功', 'success');
+          addToast(
+            chosen === 2 ? '主机密钥已保存，连接成功' : '本次已接受，连接成功',
+            'success'
+          );
 
-          // 后台查询系统信息
           try {
             const info = await AppGo.SystemInfo(sessionId);
             if (info) {
@@ -592,6 +624,7 @@ export default function App() {
     const existing = sessions.find((s) => s.serverId === server.id && s.status !== 'closed');
     if (existing) {
       setActiveSessionId(existing.id);
+      setActiveTerminalId(existing.terminals?.[0]?.id || existing.id);
       setContentTab('terminal');
       return;
     }
@@ -603,10 +636,12 @@ export default function App() {
       serverName: server.name || server.host,
       host: server.host,
       status: 'connecting',
+      terminals: [{ id: sessionId, label: '终端1' }],
     };
 
     setSessions((prev) => [...prev, newSession]);
     setActiveSessionId(sessionId);
+    setActiveTerminalId(sessionId);
     setContentTab('terminal');
     // 显示连接进度卡片
     setConnectingServer({ server, sessionId, startTime: Date.now() });
@@ -665,15 +700,83 @@ export default function App() {
   // ── Close session ──────────────────────────────────────────
   const closeSession = useCallback(async (sessionId, e) => {
     e?.stopPropagation();
-    try {
-      await AppGo.DisconnectSSH(sessionId);
-    } catch (e) {}
+    const session = sessions.find(s => s.id === sessionId);
+    // 关闭该会话的所有终端
+    if (session?.terminals) {
+      for (const t of session.terminals) {
+        try { await AppGo.DisconnectSSH(t.id); } catch (_) {}
+      }
+    } else {
+      try { await AppGo.DisconnectSSH(sessionId); } catch (_) {}
+    }
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     if (activeSessionId === sessionId) {
       const remaining = sessions.filter((s) => s.id !== sessionId);
       setActiveSessionId(remaining.length > 0 ? remaining[remaining.length - 1].id : null);
+      setActiveTerminalId(null);
     }
   }, [activeSessionId, sessions]);
+
+  // ── 在当前服务器上新建终端标签 ──────────────────────────────
+  const openNewTerminal = useCallback(async (sessionId) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session || session.status !== 'connected') return;
+    
+    // 使用当前会话中任意一个现有终端的 ID，确保即使第一个终端已关闭也能找到共享连接
+    const baseTermId = session.terminals?.[0]?.id || sessionId;
+    
+    // 计算下一个终端编号（找最大编号 + 1）
+    let maxNum = 0;
+    (session.terminals || []).forEach(t => {
+      const match = t.label?.match(/终端(\d+)/);
+      if (match) maxNum = Math.max(maxNum, parseInt(match[1]));
+    });
+    const termLabel = `终端${maxNum + 1}`;
+    
+    try {
+      const newTermId = await AppGo.OpenTerminal(baseTermId);
+      setSessions((prev) =>
+        prev.map((s) => s.id === sessionId
+          ? { ...s, terminals: [...(s.terminals || []), { id: newTermId, label: termLabel }] }
+          : s
+        )
+      );
+      setActiveTerminalId(newTermId);
+      setContentTab('terminal');
+    } catch (err) {
+      addToast(`新建终端失败: ${err}`, 'error', 5000);
+    }
+  }, [sessions, addToast]);
+
+  // ── 关闭单个终端标签 ──────────────────────────────────────
+  const closeTerminal = useCallback(async (sessionId, terminalId, e) => {
+    e?.stopPropagation();
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session?.terminals) return;
+    
+    try { await AppGo.DisconnectSSH(terminalId); } catch (_) {}
+    
+    setSessions((prev) => {
+      return prev.map((s) => {
+        if (s.id !== sessionId) return s;
+        const remaining = (s.terminals || []).filter(t => t.id !== terminalId);
+        if (remaining.length === 0) return null; // 标记删除
+        return { ...s, terminals: remaining };
+      }).filter(Boolean); // 移除被标记的
+    });
+    
+    if (activeTerminalId === terminalId) {
+      const remaining = (session.terminals || []).filter(t => t.id !== terminalId);
+      if (remaining.length > 0) {
+        setActiveTerminalId(remaining[remaining.length - 1].id);
+      } else {
+        // 最后一个终端被关闭，整个 session 也被移除了
+        setActiveTerminalId(null);
+        const remainingSessions = sessions.filter(s => s.id !== sessionId);
+        setActiveSessionId(remainingSessions.length > 0 ? remainingSessions[remainingSessions.length - 1].id : null);
+      }
+    }
+  }, [activeTerminalId, sessions]);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
@@ -760,7 +863,7 @@ export default function App() {
       {/* ── Topbar ───────────────────────────────────────── */}
       <div className="topbar">
         <div className="topbar-content">
-          <div className="topbar-logo" style={{ marginLeft: 8, cursor: 'pointer' }} onClick={() => { setActiveSessionId(null); setShowSettings(false); }}>
+          <div className="topbar-logo" style={{ marginLeft: 8, cursor: 'pointer' }} onClick={() => { setActiveSessionId(null); setActiveTerminalId(null); setShowSettings(false); }}>
             <img src={logoImg} alt="logo" />
             <div className="topbar-title" style={{ userSelect: 'none' }}>Aether</div>
           </div>
@@ -769,7 +872,7 @@ export default function App() {
             <div className="tab-bar" style={{ flex: 1, padding: '0 16px', background: 'transparent', borderBottom: 'none', height: '100%', alignItems: 'center' }}>
               <button 
                 className="btn btn-ghost btn-sm no-drag" 
-                onClick={() => setActiveSessionId(null)} 
+                onClick={() => { setActiveSessionId(null); setActiveTerminalId(null); }} 
                 style={{ marginRight: 8, height: '26px', display: 'flex', alignItems: 'center', gap: 4 }}
                 title="返回主页"
               >
@@ -779,7 +882,7 @@ export default function App() {
                 <div
                   key={s.id}
                   className={`tab-item no-drag ${activeSessionId === s.id ? 'active' : ''}`}
-                  onClick={() => setActiveSessionId(s.id)}
+                  onClick={() => { setActiveSessionId(s.id); const sess = sessions.find(x => x.id === s.id); setActiveTerminalId(sess?.terminals?.[0]?.id || s.id); }}
                   style={{ height: '28px', minHeight: '28px', display: 'flex', alignItems: 'center', gap: '4px' }}
                 >
                   <span style={{ fontSize: '10px', display: 'inline-block', lineHeight: 1 }}>
@@ -1037,6 +1140,67 @@ export default function App() {
               </div>
             )}
 
+            {/* ── 终端子标签栏（多终端支持） ──────────────────── */}
+            {activeSession && contentTab === 'terminal' && activeSession.status === 'connected' && activeSession.terminals && activeSession.terminals.length >= 1 && (
+              <div className="terminal-sub-tab-bar" style={{
+                display: 'flex', alignItems: 'center', gap: 2,
+                padding: '2px 12px 1px',
+                background: 'var(--bg-1)',
+                borderBottom: '1px solid var(--border)',
+                flexShrink: 0,
+              }}>
+                {activeSession.terminals.map((t, idx) => (
+                  <div
+                    key={t.id}
+                    className={`terminal-sub-tab ${activeTerminalId === t.id ? 'active' : ''}`}
+                    onClick={() => { setActiveTerminalId(t.id); setContentTab('terminal'); }}
+                    title={t.label}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '2px 10px',
+                      fontSize: 11,
+                      borderRadius: '4px 4px 0 0',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                      background: activeTerminalId === t.id ? 'var(--bg-3)' : 'transparent',
+                      color: activeTerminalId === t.id ? 'var(--text-1)' : 'var(--text-3)',
+                      border: activeTerminalId === t.id ? '1px solid var(--border)' : '1px solid transparent',
+                      borderBottom: activeTerminalId === t.id ? '1px solid var(--bg-3)' : '1px solid transparent',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <span style={{ fontSize: 11 }}>🖥</span>
+                    <span>{t.label}</span>
+                    {activeSession.terminals.length > 1 && (
+                      <span
+                        className="terminal-sub-tab-close"
+                        onClick={(e) => closeTerminal(activeSession.id, t.id, e)}
+                        style={{
+                          marginLeft: 4, fontSize: 10, opacity: 0.5,
+                          cursor: 'pointer', lineHeight: 1,
+                        }}
+                        onMouseEnter={e2 => e2.currentTarget.style.opacity = 1}
+                        onMouseLeave={e2 => e2.currentTarget.style.opacity = 0.5}
+                      >✕</span>
+                    )}
+                  </div>
+                ))}
+                {/* ── 新建终端按钮 ── */}
+                <button
+                  className="btn-ghost"
+                  onClick={() => openNewTerminal(activeSession.id)}
+                  title="新建终端"
+                  style={{
+                    marginLeft: 2, padding: '1px 6px',
+                    fontSize: 12, lineHeight: 1,
+                    cursor: 'pointer', border: 'none',
+                    background: 'transparent', color: 'var(--text-3)',
+                    borderRadius: 4,
+                  }}
+                >➕ {t('新终端')}</button>
+              </div>
+            )}
+
             {/* Session Content */}
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
               {/* 左侧/上侧主体容器 */}
@@ -1062,10 +1226,11 @@ export default function App() {
                           minWidth: 180,
                           flexShrink: 0,
                         }}>
-                          <FileManager
-                            sessionId={s.id}
-                            addToast={addToast}
-                          />
+                          {(s.terminals?.length > 0 ? s.terminals : [{ id: s.id }]).map(t => (
+                            <div key={t.id} style={activeSessionId === s.id && activeTerminalId === t.id ? { display: 'contents' } : { display: 'none' }}>
+                              <FileManager sessionId={t.id} addToast={addToast} />
+                            </div>
+                          ))}
                         </div>
                         <div
                           className="split-resizer-v"
@@ -1086,20 +1251,29 @@ export default function App() {
 
                     {/* 主要视口 (终端/标签页模式下的文件) */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
-                      <div style={{ display: (contentTab === 'terminal' || s.status !== 'connected') ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, height: '100%' }}>
-                        <Terminal
-                          sessionId={s.id}
-                          status={s.status}
-                          isActive={activeSessionId === s.id && (contentTab === 'terminal' || fileManagerPosition !== 'tab')}
-                          serverName={s.serverName}
-                        />
+                      <div style={{ display: (contentTab === 'terminal' || s.status !== 'connected') ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0, height: '100%', position: 'relative' }}>
+                        {(s.terminals && s.terminals.length > 0 ? s.terminals : [{ id: s.id, label: '终端' }]).map((t) => (
+                          <div key={t.id} style={{
+                            position: 'absolute', inset: 0,
+                            display: ((contentTab === 'terminal' || s.status !== 'connected') && activeTerminalId === t.id) ? 'flex' : 'none',
+                            flexDirection: 'column',
+                          }}>
+                            <Terminal
+                              sessionId={t.id}
+                              status={s.status}
+                              isActive={activeSessionId === s.id && activeTerminalId === t.id && (contentTab === 'terminal' || fileManagerPosition !== 'tab')}
+                              serverName={s.serverName}
+                            />
+                          </div>
+                        ))}
                       </div>
                       {s.status === 'connected' && fileManagerPosition === 'tab' && (
-                        <div style={{ display: contentTab === 'files' ? 'block' : 'none', height: '100%', flex: 1 }}>
-                          <FileManager
-                            sessionId={s.id}
-                            addToast={addToast}
-                          />
+                        <div style={{ display: contentTab === 'files' ? 'flex' : 'none', height: '100%', flex: 1, flexDirection: 'column' }}>
+                          {(s.terminals?.length > 0 ? s.terminals : [{ id: s.id }]).map(t => (
+                            <div key={t.id} style={activeSessionId === s.id && activeTerminalId === t.id ? { display: 'contents' } : { display: 'none' }}>
+                              <FileManager sessionId={t.id} addToast={addToast} />
+                            </div>
+                          ))}
                         </div>
                       )}
                       {s.status === 'connected' && (
@@ -1137,10 +1311,11 @@ export default function App() {
                           minHeight: 100,
                           flexShrink: 0,
                         }}>
-                          <FileManager
-                            sessionId={s.id}
-                            addToast={addToast}
-                          />
+                          {(s.terminals?.length > 0 ? s.terminals : [{ id: s.id }]).map(t => (
+                            <div key={t.id} style={activeSessionId === s.id && activeTerminalId === t.id ? { display: 'contents' } : { display: 'none' }}>
+                              <FileManager sessionId={t.id} addToast={addToast} />
+                            </div>
+                          ))}
                         </div>
                       </>
                     )}
