@@ -1026,6 +1026,15 @@ func (m *SSHManager) ListDir(sessionId string, path string) ([]map[string]interf
 			"rights":      map[string]string{"user": formatFileMode(f.Mode())},
 		})
 	}
+	// 文件夹在前，文件在后，同类按名称排序
+	sort.Slice(results, func(i, j int) bool {
+		iDir := results[i]["isDirectory"].(bool)
+		jDir := results[j]["isDirectory"].(bool)
+		if iDir != jDir {
+			return iDir
+		}
+		return results[i]["name"].(string) < results[j]["name"].(string)
+	})
 	return results, nil
 }
 
