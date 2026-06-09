@@ -476,11 +476,15 @@ export default function App() {
         }
       } catch (_) {}
     } catch (err) {
+      const errMsg = String(err);
+      const isHostKeyChange = errMsg.includes('主机密钥已变更');
       setSessions((prev) =>
-        prev.map((s) => (s.id === session.id ? { ...s, status: 'error' } : s))
+        prev.map((s) => (s.id === session.id ? { ...s, status: isHostKeyChange ? 'connecting' : 'error' } : s))
       );
-      setConnectingServer(null);
-      addToast(`重新连接失败: ${err}`, 'error', 5000);
+      if (!isHostKeyChange) {
+        setConnectingServer(null);
+        addToast(`重新连接失败: ${err}`, 'error', 5000);
+      }
     }
   }, [servers, addToast]);
 
@@ -491,6 +495,79 @@ export default function App() {
         prev.map((s) => (s.id === sessionId ? { ...s, status: 'closed' } : s))
       );
       addToast('SSH 连接已意外断开', 'error', 4000);
+    });
+    return () => {
+      if (unbind) unbind();
+    };
+  }, [addToast]);
+
+  // ── 监听主机密钥变更事件 ────────────────────────────────────
+  useEffect(() => {
+    const unbind = EventsOn('ssh-host-key-changed', async (data) => {
+      const {
+        sessionId, hostname, host, port, newFingerprint, oldFingerprints
+      } = data;
+
+      const oldFpList = (oldFingerprints || []).join('\n');
+      const msg = [
+        `远程主机密钥已变更，可能存在中间人攻击！`,
+        ``,
+        `主机: ${host}:${port}`,
+        ``,
+        `新密钥指纹:`,
+        `${newFingerprint}`,
+        ``,
+        `旧密钥指纹:`,
+        `${oldFpList}`,
+        ``,
+        `如果确认这是预期的变更（如服务器重装），点击"更新并连接"。`,
+        `如果不确定，点击"取消"中止连接。`,
+      ].join('\n');
+
+      const accepted = await window.aetherDialog?.confirm?.(
+        msg,
+        '⚠️ 主机密钥已变更'
+      );
+
+      try {
+        await AppGo.AcceptHostKeyChange(sessionId, accepted);
+        if (accepted) {
+          // 更新 known_hosts 后重连成功
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === sessionId ? { ...s, status: 'connected' } : s
+            )
+          );
+          setConnectingServer(null);
+          addToast('主机密钥已更新，连接成功', 'success');
+
+          // 后台查询系统信息
+          try {
+            const info = await AppGo.SystemInfo(sessionId);
+            if (info) {
+              setSessions((prev) =>
+                prev.map((s) => (s.id === sessionId ? { ...s, osInfo: info } : s))
+              );
+              setMonitoringEnabled((prev) => ({ ...prev, [sessionId]: true }));
+            }
+          } catch (_) {}
+        } else {
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === sessionId ? { ...s, status: 'error' } : s
+            )
+          );
+          setConnectingServer(null);
+        }
+      } catch (err) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId ? { ...s, status: 'error' } : s
+          )
+        );
+        setConnectingServer(null);
+        addToast(`连接失败: ${err}`, 'error', 5000);
+      }
     });
     return () => {
       if (unbind) unbind();
@@ -571,11 +648,17 @@ export default function App() {
         return updated;
       });
     } catch (err) {
+      const errMsg = String(err);
+      // 主机密钥变更由专用弹窗处理，不显示 toast
+      const isHostKeyChange = errMsg.includes('主机密钥已变更');
       setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: 'error' } : s))
+        prev.map((s) => (s.id === sessionId ? { ...s, status: isHostKeyChange ? 'connecting' : 'error' } : s))
       );
-      setConnectingServer(null); // 连接失败，关闭进度卡片
-      addToast(`连接失败: ${err}`, 'error', 5000);
+      if (!isHostKeyChange) {
+        setConnectingServer(null); // 连接失败，关闭进度卡片
+        addToast(`连接失败: ${err}`, 'error', 5000);
+      }
+      // 如果是主机密钥变更，保持 connectingServer 和 connecting 状态，等待弹窗确认
     }
   }, [sessions, addToast]);
 

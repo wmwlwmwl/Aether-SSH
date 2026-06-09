@@ -14,6 +14,7 @@ type commandHistoryStream struct {
 	visibleCarry []byte
 	payloadCarry []byte
 	inMarker     bool
+	lastCommand  string // 去重：记录上次解析出的命令
 }
 
 func newCommandHistoryStream() *commandHistoryStream {
@@ -42,7 +43,10 @@ func (s *commandHistoryStream) Process(chunk []byte) ([]byte, []string) {
 			end := i + relEnd
 			s.payloadCarry = append(s.payloadCarry, data[i:end]...)
 			if command := decodeHistoryMarkerPayload(s.payloadCarry); command != "" {
-				commands = append(commands, command)
+				if command != s.lastCommand {
+					commands = append(commands, command)
+					s.lastCommand = command
+				}
 			}
 			s.payloadCarry = s.payloadCarry[:0]
 			s.inMarker = false

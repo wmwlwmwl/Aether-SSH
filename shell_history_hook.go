@@ -43,7 +43,7 @@ func buildShellLaunchCommand(shellPath string) (string, bool) {
 		return "", false
 	}
 
-	hook := `if [ -n "${AETHER_PROMPT_SEEN:-}" ]; then AETHER_LAST="$(HISTTIMEFORMAT= history 1 2>/dev/null)"; AETHER_LAST="${AETHER_LAST#*  }"; if [ -n "$AETHER_LAST" ]; then AETHER_ENCODED="$(printf '%s' "$AETHER_LAST" | base64 | tr -d '\r\n')"; printf '\037AETHER_CMD\037%s\036' "$AETHER_ENCODED"; fi; fi; AETHER_PROMPT_SEEN=1; if [ -n "${AETHER_OLD_PROMPT_COMMAND:-}" ]; then eval "$AETHER_OLD_PROMPT_COMMAND"; fi`
+	hook := `if [ -n "${AETHER_PROMPT_SEEN:-}" ]; then AETHER_LAST="$(fc -ln -1 2>/dev/null)"; AETHER_LAST="${AETHER_LAST#"${AETHER_LAST%%[![:space:]]*}"}"; if [ -n "$AETHER_LAST" ]; then AETHER_ENCODED="$(printf '%s' "$AETHER_LAST" | base64 | tr -d '\r\n')"; printf '\037AETHER_CMD\037%s\036' "$AETHER_ENCODED"; fi; fi; AETHER_PROMPT_SEEN=1; if [ -n "${AETHER_OLD_PROMPT_COMMAND:-}" ]; then eval "$AETHER_OLD_PROMPT_COMMAND"; fi`
 
 	command := fmt.Sprintf(
 		"export HISTCONTROL=; export HISTIGNORE=; export AETHER_OLD_PROMPT_COMMAND=\"$PROMPT_COMMAND\"; export PROMPT_COMMAND=%s; exec %s -il",

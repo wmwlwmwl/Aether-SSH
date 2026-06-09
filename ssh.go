@@ -21,6 +21,18 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// ErrHostKeyChanged 在远程主机密钥发生变化时返回，需要用户确认
+var ErrHostKeyChanged = errors.New("host key has changed")
+
+// PendingHostKey 保存等待用户确认的主机密钥变更信息
+type PendingHostKey struct {
+	Conn         Connection
+	Hostname     string
+	NewKey       ssh.PublicKey
+	NewFingerprint string
+	OldKeys      []knownhosts.KnownKey
+}
+
 type SessionData struct {
 	Client              *ssh.Client
 	Session             *ssh.Session
@@ -31,17 +43,19 @@ type SessionData struct {
 }
 
 type SSHManager struct {
-	ctx           context.Context
-	app           *App // reference to App for WebSocket output delivery
-	sessions      map[string]*SessionData
-	probeDeployed map[string]bool // tracks which sessions have probe.sh deployed
-	mu            sync.Mutex
+	ctx              context.Context
+	app              *App // reference to App for WebSocket output delivery
+	sessions         map[string]*SessionData
+	probeDeployed    map[string]bool            // tracks which sessions have probe.sh deployed
+	pendingHostKeys  map[string]*PendingHostKey // sessionId -> pending host key info
+	mu               sync.Mutex
 }
 
 func NewSSHManager() *SSHManager {
 	return &SSHManager{
-		sessions:      make(map[string]*SessionData),
-		probeDeployed: make(map[string]bool),
+		sessions:        make(map[string]*SessionData),
+		probeDeployed:   make(map[string]bool),
+		pendingHostKeys: make(map[string]*PendingHostKey),
 	}
 }
 
@@ -94,6 +108,7 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 		var keyErr *knownhosts.KeyError
 		if errors.As(err, &keyErr) {
 			if len(keyErr.Want) == 0 {
+				// 新主机，自动信任
 				f, fErr := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_WRONLY, 0600)
 				if fErr == nil {
 					defer f.Close()
@@ -102,7 +117,16 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 				}
 				return nil
 			} else {
-				return fmt.Errorf("WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! POSSIBLE MITM ATTACK")
+				// 密钥已变更，需要用户确认
+				fingerprint := ssh.FingerprintSHA256(key)
+				m.pendingHostKeys[sessionId] = &PendingHostKey{
+					Conn:            conn,
+					Hostname:        hostname,
+					NewKey:          key,
+					NewFingerprint:  fingerprint,
+					OldKeys:         keyErr.Want,
+				}
+				return ErrHostKeyChanged
 			}
 		}
 		return err
@@ -128,6 +152,25 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 	target := fmt.Sprintf("%s:%d", strings.TrimSpace(conn.Host), conn.Port)
 	client, err := ssh.Dial("tcp", target, config)
 	if err != nil {
+		// 如果是主机密钥变更，发出事件通知前端
+		if errors.Is(err, ErrHostKeyChanged) {
+			if m.ctx != nil {
+				pending := m.pendingHostKeys[sessionId]
+				oldFingerprints := make([]string, 0, len(pending.OldKeys))
+				for _, k := range pending.OldKeys {
+					oldFingerprints = append(oldFingerprints, ssh.FingerprintSHA256(k.Key))
+				}
+				runtime.EventsEmit(m.ctx, "ssh-host-key-changed", map[string]interface{}{
+					"sessionId":     sessionId,
+					"hostname":      pending.Hostname,
+					"host":          conn.Host,
+					"port":          conn.Port,
+					"newFingerprint": pending.NewFingerprint,
+					"oldFingerprints": oldFingerprints,
+				})
+			}
+			return fmt.Errorf("主机密钥已变更，请在弹窗中确认")
+		}
 		return err
 	}
 
@@ -294,6 +337,65 @@ func (m *SSHManager) CloseSessionResources(sessionId string) {
 		if s.SFTP != nil { s.SFTP.Close() }
 		if s.Client != nil { s.Client.Close() }
 	}
+}
+
+// AcceptHostKeyChange 处理用户对主机密钥变更的确认
+// accept=true: 更新 known_hosts 文件并自动重连
+// accept=false: 清除待处理记录
+func (m *SSHManager) AcceptHostKeyChange(sessionId string, accept bool) error {
+	m.mu.Lock()
+	pending, exists := m.pendingHostKeys[sessionId]
+	if !exists {
+		m.mu.Unlock()
+		return fmt.Errorf("no pending host key change for session %s", sessionId)
+	}
+	delete(m.pendingHostKeys, sessionId)
+	m.mu.Unlock()
+
+	if !accept {
+		return fmt.Errorf("用户取消了主机密钥更新")
+	}
+
+	// 更新 known_hosts: 删除旧密钥行，添加新密钥行
+	knownHostsPath := filepath.Join(os.Getenv("USERPROFILE"), ".ssh", "known_hosts")
+	os.MkdirAll(filepath.Dir(knownHostsPath), 0700)
+
+	// 读取现有内容并过滤掉旧密钥行
+	data, err := os.ReadFile(knownHostsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("无法读取 known_hosts: %v", err)
+	}
+
+	var newLines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			newLines = append(newLines, line)
+			continue
+		}
+		// 检查该行是否匹配任意一个旧密钥
+		isOld := false
+		for _, oldKey := range pending.OldKeys {
+			if strings.Contains(line, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(oldKey.Key)))) {
+				isOld = true
+				break
+			}
+		}
+		if !isOld {
+			newLines = append(newLines, line)
+		}
+	}
+
+	// 追加新密钥
+	newLine := knownhosts.Line([]string{pending.Hostname}, pending.NewKey)
+	newLines = append(newLines, newLine)
+
+	if err := os.WriteFile(knownHostsPath, []byte(strings.Join(newLines, "\n")+"\n"), 0600); err != nil {
+		return fmt.Errorf("无法写入 known_hosts: %v", err)
+	}
+
+	// 自动重连
+	return m.Connect(sessionId, pending.Conn)
 }
 
 func (m *SSHManager) GetTerminalCwd(sessionId string) (string, error) {
