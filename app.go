@@ -42,7 +42,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.sshManager.ctx = ctx // Give SSH manager access to Wails events
-	a.sshManager.app = a  // Give SSH manager access to WebSocket registry
+	a.sshManager.app = a   // Give SSH manager access to WebSocket registry
 
 	// ── 启动本地 WebSocket 终端服务器 ─────────────────────────────────
 	// 不经过 Wails IPC，直接走 TCP loopback，延迟极低
@@ -155,6 +155,25 @@ func (a *App) ConnectSSH(sessionId string, connId string) error {
 	if conn == nil {
 		return fmt.Errorf("connection not found")
 	}
+	return a.sshManager.Connect(sessionId, *conn)
+}
+
+// ReconnectWithPassword 更新密码并重连（认证失败后使用）
+// persist: true=保存到已知主机列表, false=仅本次会话使用
+func (a *App) ReconnectWithPassword(sessionId string, connId string, newPassword string, persist bool) error {
+	conn := a.configManager.GetConnectionByID(connId)
+	if conn == nil {
+		return fmt.Errorf("connection not found")
+	}
+	conn.Password = newPassword
+	if persist {
+		a.configManager.SaveConnection(*conn)
+	}
+
+	// 清理旧会话
+	a.sshManager.Disconnect(sessionId)
+
+	// 重新连接
 	return a.sshManager.Connect(sessionId, *conn)
 }
 
@@ -305,10 +324,10 @@ func (a *App) PingServer(host string, port int) map[string]interface{} {
 // downloadProgressReader wraps an io.Reader to track download progress and emit Wails events
 type downloadProgressReader struct {
 	io.Reader
-	ctx         context.Context
-	total       int64
-	downloaded  int64
-	lastEmit    time.Time
+	ctx        context.Context
+	total      int64
+	downloaded int64
+	lastEmit   time.Time
 }
 
 func (pr *downloadProgressReader) Read(p []byte) (int, error) {

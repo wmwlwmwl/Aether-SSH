@@ -375,10 +375,18 @@ export default function App() {
       setQuickKey('');
       setQuickPassphrase('');
     } catch (err) {
+      const errMsg = String(err);
+      // 主机密钥变更由专用弹窗处理，不显示 toast
+      const isHostKeyChange = errMsg.includes('主机密钥已变更');
+      // 认证失败由专用弹窗处理，不显示 toast
+      const isAuthFailed = errMsg.includes('认证失败');
       setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: 'error' } : s))
+        prev.map((s) => (s.id === sessionId ? { ...s, status: (isHostKeyChange || isAuthFailed) ? 'connecting' : 'error' } : s))
       );
-      addToast(`连接失败: ${err}`, 'error', 5000);
+      if (!isHostKeyChange && !isAuthFailed) {
+        setConnectingServer(null);
+        addToast(`连接失败: ${err}`, 'error', 5000);
+      }
     }
   };
 
@@ -606,6 +614,96 @@ export default function App() {
     };
   }, [addToast]);
 
+  // ── 监听认证失败事件（密码错误等） ──────────────────────────
+  useEffect(() => {
+    const unbind = EventsOn('ssh-auth-failed', async (data) => {
+      const { sessionId, connId, host, port, username, error } = data;
+
+      const password = await window.aetherDialog?.prompt?.(
+        [
+          `认证失败，请输入正确的密码重试：`,
+          ``,
+          `主机: ${host}:${port}`,
+          `用户: ${username}`,
+          ``,
+          `错误: ${error}`,
+        ].join('\n'),
+        '',
+        '认证失败',
+        '记住密码'
+      );
+
+      if (password === null) {
+        // 用户取消
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, status: 'error' } : s))
+        );
+        setConnectingServer(null);
+        addToast('用户取消连接', 'warning', 3000);
+        return;
+      }
+
+      const newPassword = typeof password === 'object' ? password.value : password;
+      const persist = typeof password === 'object' ? password.checked : false;
+
+      if (!newPassword) {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, status: 'error' } : s))
+        );
+        setConnectingServer(null);
+        return;
+      }
+
+      try {
+        await AppGo.ReconnectWithPassword(sessionId, connId, newPassword, persist);
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, status: 'connected' } : s))
+        );
+        setConnectingServer(null);
+        addToast(persist ? '密码已保存，连接成功' : '连接成功', 'success', 3000);
+
+        // 连接成功后自动查询 OS 信息
+        try {
+          const info = await AppGo.SystemInfo(sessionId);
+          if (info) {
+            setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, osInfo: info } : s));
+            setMonitoringEnabled((prev) => ({ ...prev, [sessionId]: true }));
+            const detectedOs = info.os || info.platform || '';
+            if (detectedOs) {
+              setServers(prevServers => {
+                const currentServer = prevServers.find(s => s.id === connId);
+                if (currentServer && currentServer.os !== detectedOs) {
+                  const updatedServer = { ...currentServer, os: detectedOs };
+                  AppGo.SaveConnection(updatedServer).catch(console.error);
+                  return prevServers.map(s => s.id === updatedServer.id ? updatedServer : s);
+                }
+                return prevServers;
+              });
+            }
+          }
+        } catch (_) {}
+
+        // 加入最近连接
+        setRecentServers((prev) => {
+          const filtered = prev.filter((s) => s.id !== connId);
+          const server = { id: connId, host, port, username };
+          const updated = [server, ...filtered].slice(0, 4);
+          localStorage.setItem('recent_servers', JSON.stringify(updated));
+          return updated;
+        });
+      } catch (retryErr) {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, status: 'error' } : s))
+        );
+        setConnectingServer(null);
+        addToast(`重连失败: ${String(retryErr)}`, 'error', 5000);
+      }
+    });
+    return () => {
+      if (unbind) unbind();
+    };
+  }, [addToast]);
+
   // ── 监听终端触发的重连请求 ──────────────────────────────────
   useEffect(() => {
     const handleReconnectTrigger = (e) => {
@@ -686,14 +784,16 @@ export default function App() {
       const errMsg = String(err);
       // 主机密钥变更由专用弹窗处理，不显示 toast
       const isHostKeyChange = errMsg.includes('主机密钥已变更');
+      // 认证失败由专用弹窗处理，不显示 toast
+      const isAuthFailed = errMsg.includes('认证失败');
       setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, status: isHostKeyChange ? 'connecting' : 'error' } : s))
+        prev.map((s) => (s.id === sessionId ? { ...s, status: (isHostKeyChange || isAuthFailed) ? 'connecting' : 'error' } : s))
       );
-      if (!isHostKeyChange) {
-        setConnectingServer(null); // 连接失败，关闭进度卡片
+      if (!isHostKeyChange && !isAuthFailed) {
+        setConnectingServer(null);
         addToast(`连接失败: ${err}`, 'error', 5000);
       }
-      // 如果是主机密钥变更，保持 connectingServer 和 connecting 状态，等待弹窗确认
+      // 主机密钥变更或认证失败时，保持 connectingServer 和 connecting 状态，等待弹窗确认
     }
   }, [sessions, addToast]);
 

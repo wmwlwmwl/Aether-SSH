@@ -82,6 +82,10 @@ export function ReadPrivateKeyFile() {
   return window['go']['main']['App']['ReadPrivateKeyFile']();
 }
 
+export function ReconnectWithPassword(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ReconnectWithPassword'](arg1, arg2, arg3, arg4);
+}
+
 export function RenameItem(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameItem'](arg1, arg2, arg3);
 }

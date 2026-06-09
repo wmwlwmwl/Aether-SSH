@@ -132,10 +132,9 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 				if len(keyErr.Want) == 0 {
 					fingerprint := ssh.FingerprintSHA256(key)
 
-					// 检查是否为临时接受的密钥（仅本次连接）
+					// 检查是否为临时接受的密钥（仅本次会话）
 					m.mu.Lock()
 					if m.tempAcceptedKeys[fingerprint] {
-						delete(m.tempAcceptedKeys, fingerprint)
 						m.mu.Unlock()
 						return nil
 					}
@@ -153,10 +152,9 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 				} else {
 					fingerprint := ssh.FingerprintSHA256(key)
 
-					// 检查是否为临时接受的密钥（仅本次连接）
+					// 检查是否为临时接受的密钥（仅本次会话）
 					m.mu.Lock()
 					if m.tempAcceptedKeys[fingerprint] {
-						delete(m.tempAcceptedKeys, fingerprint)
 						m.mu.Unlock()
 						return nil // 本次接受该密钥
 					}
@@ -215,6 +213,22 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 				}
 				return fmt.Errorf("主机密钥已变更，请在弹窗中确认")
 			}
+
+			// 认证失败（密码错误等）：发送事件通知前端弹出密码输入框
+			errStr := dialErr.Error()
+			if m.ctx != nil && (strings.Contains(errStr, "unable to authenticate") ||
+				strings.Contains(errStr, "no supported methods remain")) {
+				runtime.EventsEmit(m.ctx, "ssh-auth-failed", map[string]interface{}{
+					"sessionId": sessionId,
+					"connId":    conn.ID,
+					"host":      conn.Host,
+					"port":      conn.Port,
+					"username":  conn.Username,
+					"error":     errStr,
+				})
+				return fmt.Errorf("认证失败")
+			}
+
 			return dialErr
 		}
 

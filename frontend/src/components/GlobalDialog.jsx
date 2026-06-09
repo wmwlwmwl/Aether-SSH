@@ -29,7 +29,7 @@ export default function GlobalDialog() {
           }]);
         });
       },
-      prompt: (message, defaultValue = '', title = '输入信息') => {
+      prompt: (message, defaultValue = '', title = '输入信息', checkboxLabel = '') => {
         return new Promise((resolve) => {
           setDialogs(prev => [...prev, {
             id: Date.now() + Math.random(),
@@ -37,7 +37,8 @@ export default function GlobalDialog() {
             title,
             message,
             defaultValue,
-            onConfirm: (val) => resolve(val),
+            checkboxLabel,
+            onConfirm: (val, checked) => resolve(checkboxLabel ? { value: val, checked } : val),
             onCancel: () => resolve(null)
           }]);
         });
@@ -71,8 +72,8 @@ export default function GlobalDialog() {
     setDialogs(prev => prev.slice(1));
   };
 
-  const handleConfirm = (val) => {
-    if (current.onConfirm) current.onConfirm(val);
+  const handleConfirm = (val, checked) => {
+    if (current.onConfirm) current.onConfirm(val, checked);
     setDialogs(prev => prev.slice(1));
   };
 
@@ -90,6 +91,7 @@ export default function GlobalDialog() {
 
 function DialogContent({ current, onClose, onConfirm, onChoice }) {
   const [inputValue, setInputValue] = useState(current.defaultValue || '');
+  const [checked, setChecked] = useState(false);
 
   return (
     <div className="modal modal-sm" style={{ padding: 32, textAlign: 'center' }}>
@@ -101,17 +103,26 @@ function DialogContent({ current, onClose, onConfirm, onChoice }) {
       </div>
       
       {current.type === 'prompt' && (
-        <input 
-          autoFocus
-          className="input" 
-          style={{ width: '100%', marginBottom: 28, textAlign: 'center', fontSize: 16, padding: '12px 16px' }}
-          value={inputValue}
-          onChange={e => setInputValue(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') onConfirm(inputValue);
-            if (e.key === 'Escape') onClose();
-          }}
-        />
+        <>
+          <input 
+            autoFocus
+            className="input" 
+            style={{ width: '100%', marginBottom: current.checkboxLabel ? 12 : 28, textAlign: 'center', fontSize: 16, padding: '12px 16px' }}
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            type={current.checkboxLabel ? 'password' : 'text'}
+            onKeyDown={e => {
+              if (e.key === 'Enter') onConfirm(inputValue, checked);
+              if (e.key === 'Escape') onClose();
+            }}
+          />
+          {current.checkboxLabel && (
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 28, fontSize: 13, color: 'var(--text-3)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} />
+              {current.checkboxLabel}
+            </label>
+          )}
+        </>
       )}
 
       {current.type === 'choice' ? (
@@ -135,7 +146,7 @@ function DialogContent({ current, onClose, onConfirm, onChoice }) {
         <button 
           className="btn btn-primary"
           onClick={() => {
-            if (current.type === 'prompt') onConfirm(inputValue);
+            if (current.type === 'prompt') onConfirm(inputValue, checked);
             else if (current.type === 'confirm') onConfirm(true);
             else onClose();
           }}
