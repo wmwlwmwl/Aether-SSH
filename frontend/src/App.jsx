@@ -1440,11 +1440,12 @@ export default function App() {
                     }}
                   >
                     <ProbePanel
-                      sessionId={activeSession.id}
-                      addToast={addToast}
-                      enabled={!!monitoringEnabled[activeSession.id]}
-                      onEnable={() => setMonitoringEnabled(prev => ({ ...prev, [activeSession.id]: true }))}
-                    />
+                    sessionId={activeSession.id}
+                    host={activeSession.host}
+                    addToast={addToast}
+                    enabled={!!monitoringEnabled[activeSession.id]}
+                    onEnable={() => setMonitoringEnabled(prev => ({ ...prev, [activeSession.id]: true }))}
+                  />
                   </div>
                 </>
               )}

@@ -119,13 +119,14 @@ const ftotal = (mb) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════
-export default function ProbePanel({ sessionId, addToast, enabled, onEnable }) {
+export default function ProbePanel({ sessionId, host, addToast, enabled, onEnable }) {
   const [info, setInfo] = useState(null);
   const [uploadHist, setUploadHist] = useState(Array(30).fill(0));
   const [downloadHist, setDownloadHist] = useState(Array(30).fill(0));
   const [cpuHist, setCpuHist] = useState(Array(30).fill(0));
   const [showConfirm, setShowConfirm] = useState(false);
   const [enabling, setEnabling] = useState(false);
+  const [hideIP, setHideIP] = useState(false);
 
   const fetchInfo = useCallback(async () => {
     if (!sessionId || !enabled) return;
@@ -143,6 +144,9 @@ export default function ProbePanel({ sessionId, addToast, enabled, onEnable }) {
         memTotal: data.memory?.total || 0,
         memCache: data.memory?.cache || 0,
         memFree: data.memory?.free || 0,
+        swapTotal: data.memory?.swapTotal || 0,
+        swapUsed: data.memory?.swapUsed || 0,
+        swapFree: data.memory?.swapFree || 0,
         diskDevice: data.disk?.device || 'disk',
         diskType: data.disk?.type || 'ext4',
         diskTotal: data.disk?.total || 0,
@@ -250,16 +254,44 @@ export default function ProbePanel({ sessionId, addToast, enabled, onEnable }) {
   const cpuAvg = Math.round(cores.reduce((a, b) => a + b, 0) / cores.length);
   const osParts = info.os?.split(' ') || ['Linux'];
 
+  // 判断是否为内网 IP
+  const isInternalIP = (ip) => {
+    if (!ip) return true;
+    const p = ip.split('.');
+    if (p.length !== 4) return true;
+    const a = +p[0], b = +p[1];
+    if (a === 10) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 127) return true;
+    return false;
+  };
+  const displayIP = info.ip && !isInternalIP(info.ip) ? info.ip : host;
+
   return (
     <div className="probe-panel" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 8px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
 
       {/* ── 系统 ── */}
       <Card>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-          <span style={{ fontSize: 14 }}>🖥</span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', flex: 1 }}>系统</span>
-          {info.ip && (
-            <span style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--text-4)' }}>{info.ip}</span>
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 14 }}>🖥</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>系统</span>
+          </div>
+          {displayIP && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3, minWidth: 0 }}>
+              <span title={hideIP ? '' : displayIP} style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: '#fbbf24', fontWeight: 700, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.25)', padding: '1px 6px', borderRadius: 4, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 1 }}>
+                {hideIP ? '***.***.***.***' : displayIP}
+              </span>
+              <button onClick={() => { navigator.clipboard.writeText(displayIP); addToast?.('已复制 ' + displayIP, 'success'); }} title="复制 IP"
+                style={{ background: 'none', border: 'none', color: 'var(--text-4)', cursor: 'pointer', padding: '2px 4px', fontSize: 13, lineHeight: 1, borderRadius: 3 }}
+                onMouseOver={e => e.currentTarget.style.color = 'var(--text-1)'}
+                onMouseOut={e => e.currentTarget.style.color = 'var(--text-4)'}>📋</button>
+              <button onClick={() => setHideIP(p => !p)} title={hideIP ? '显示 IP' : '隐藏 IP'}
+                style={{ background: 'none', border: 'none', color: 'var(--text-4)', cursor: 'pointer', padding: '2px 4px', fontSize: 13, lineHeight: 1, borderRadius: 3 }}
+                onMouseOver={e => e.currentTarget.style.color = 'var(--text-1)'}
+                onMouseOut={e => e.currentTarget.style.color = 'var(--text-4)'}>{hideIP ? '👁' : '🙈'}</button>
+            </div>
           )}
         </div>
         <div style={{ display: 'flex', gap: 5, marginBottom: 6 }}>
@@ -315,6 +347,21 @@ export default function ProbePanel({ sessionId, addToast, enabled, onEnable }) {
         <div style={{ fontSize: 12.5, color: 'var(--text-4)', textAlign: 'right', marginTop: 4 }}>
           使用率 <span style={{ color: memPct >= 80 ? '#ef4444' : '#4ade80', fontWeight: 700 }}>{memPct}%</span>
         </div>
+        {info.swapTotal > 0 && (
+          <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <span style={{ fontSize: 11.5, color: 'var(--text-4)' }}>🔄 SWAP</span>
+              <span style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>{fmem(info.swapTotal)}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ flex: 1, height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ width: `${Math.min(info.swapUsed / info.swapTotal * 100, 100)}%`, height: '100%', background: '#a855f7', borderRadius: 3 }} />
+              </div>
+              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: '#a855f7', fontWeight: 600, minWidth: 50, textAlign: 'right' }}>{fmem(info.swapUsed)}</span>
+              <span style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--text-4)', minWidth: 36, textAlign: 'right' }}>{Math.round(info.swapUsed / info.swapTotal * 100)}%</span>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* ── 网络 ── */}

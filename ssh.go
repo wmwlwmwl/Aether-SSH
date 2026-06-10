@@ -920,6 +920,7 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 
 	// ── Parse memory ──────────────────────────────────────────────────
 	var memTotal, memFree, memBuffers, memCached, memSReclaimable uint64
+	var swapTotal, swapFree uint64
 	for _, l := range lines1 {
 		switch {
 		case strings.HasPrefix(l, "MemTotal:"):
@@ -932,6 +933,10 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 			fmt.Sscanf(l, "Cached: %d", &memCached)
 		case strings.HasPrefix(l, "SReclaimable:"):
 			fmt.Sscanf(l, "SReclaimable: %d", &memSReclaimable)
+		case strings.HasPrefix(l, "SwapTotal:"):
+			fmt.Sscanf(l, "SwapTotal: %d", &swapTotal)
+		case strings.HasPrefix(l, "SwapFree:"):
+			fmt.Sscanf(l, "SwapFree: %d", &swapFree)
 		}
 	}
 	memTotalMB := float64(memTotal) / 1024.0
@@ -940,6 +945,12 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 	memUsedMB := memTotalMB - memFreeMB - memCacheMB
 	if memUsedMB < 0 {
 		memUsedMB = 0
+	}
+	swapTotalMB := float64(swapTotal) / 1024.0
+	swapFreeMB := float64(swapFree) / 1024.0
+	swapUsedMB := swapTotalMB - swapFreeMB
+	if swapUsedMB < 0 {
+		swapUsedMB = 0
 	}
 
 	// ── Parse df (all partitions) ─────────────────────────────────────
@@ -1223,10 +1234,13 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 			"cores": cpuCoreUsages,
 		},
 		"memory": map[string]interface{}{
-			"total": memTotalMB,
-			"used":  memUsedMB,
-			"cache": memCacheMB,
-			"free":  memFreeMB,
+			"total":     memTotalMB,
+			"used":      memUsedMB,
+			"cache":     memCacheMB,
+			"free":      memFreeMB,
+			"swapTotal": swapTotalMB,
+			"swapUsed":  swapUsedMB,
+			"swapFree":  swapFreeMB,
 		},
 		"disk": map[string]interface{}{
 			"device":     diskDevice,
