@@ -6,6 +6,7 @@ import { AttachAddon } from '@xterm/addon-attach';
 import { Copy, Clipboard, Trash2, CheckSquare, MoreHorizontal, Play, Clock, X } from 'lucide-react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import { reduceTerminalHistoryInput } from './terminalHistory.js';
+import QuickCommands from './QuickCommands.jsx';
 import '@xterm/xterm/css/xterm.css';
 import defaultTermBg from '../assets/term_bg.png';
 
@@ -119,6 +120,9 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
   const cmdInputRef                           = useRef(null);
   const historyBtnRef                         = useRef(null);
   const [historyPopupPos, setHistoryPopupPos] = useState(null);
+  const [showCommands, setShowCommands]       = useState(false);
+  const [commandsPopupPos, setCommandsPopupPos] = useState(null);
+  const commandsBtnRef                        = useRef(null);
 
   // ── 初始化 xterm + WebSocket 终端通道 ────────────────────────────────
   // xterm.js 通过 AttachAddon + WebSocket 直接连到本地 Go WebSocket 服务器
@@ -625,10 +629,28 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
           bottom: window.innerHeight - rect.top + 4,
         });
       }
+      if (showCommands) { setShowCommands(false); setCommandsPopupPos(null); }
     } else {
       setHistoryPopupPos(null);
     }
     setShowHistory(willShow);
+  };
+
+  const toggleCommands = () => {
+    const willShow = !showCommands;
+    if (willShow) {
+      const rect = commandsBtnRef.current?.getBoundingClientRect();
+      if (rect) {
+        setCommandsPopupPos({
+          left: Math.min(rect.right - 680, window.innerWidth - 690),
+          bottom: window.innerHeight - rect.top + 4,
+        });
+      }
+      if (showHistory) { setShowHistory(false); setHistoryPopupPos(null); }
+    } else {
+      setCommandsPopupPos(null);
+    }
+    setShowCommands(willShow);
   };
 
   const selectHistoryCmd = (cmd) => {
@@ -842,6 +864,28 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
           <span>历史</span>
         </button>
 
+        {/* 快捷命令按钮 */}
+        <button
+          ref={commandsBtnRef}
+          onClick={toggleCommands}
+          title="快捷命令"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '6px 10px',
+            fontSize: 11,
+            color: showCommands ? '#22c55e' : '#8b949e',
+            background: showCommands ? 'rgba(34,197,94,0.1)' : 'transparent',
+            border: `1px solid ${showCommands ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 4,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s',
+          }}
+        >
+          <span>⚡</span>
+          <span>命令</span>
+        </button>
+
         {/* 执行按钮（绿色） */}
         <button
           onClick={executeCommand}
@@ -998,6 +1042,35 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
                 </div>
               </div>
             ))}
+          </div>
+        </>
+      )}
+
+      {/* ── 快捷命令弹窗（fixed 定位，不受 overflow:hidden 裁剪） ── */}
+      {showCommands && commandsPopupPos && (
+        <>
+          {/* 透明遮罩层，点击关闭 */}
+          <div
+            onClick={() => { setShowCommands(false); setCommandsPopupPos(null); }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 99,
+              background: 'transparent',
+            }}
+          />
+          <div style={{
+            position: 'fixed',
+            left: commandsPopupPos.left,
+            bottom: commandsPopupPos.bottom,
+            width: 680,
+            height: 420,
+            background: '#161b22',
+            border: '1px solid rgba(48,54,61,0.9)',
+            borderRadius: 8,
+            boxShadow: '0 -8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)',
+            zIndex: 100,
+            overflow: 'hidden',
+          }}>
+            <QuickCommands sessionId={sessionId} addToast={() => {}} />
           </div>
         </>
       )}

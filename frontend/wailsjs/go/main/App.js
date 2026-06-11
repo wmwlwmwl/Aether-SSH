@@ -54,6 +54,14 @@ export function GetFTPConfig() {
   return window['go']['main']['App']['GetFTPConfig']();
 }
 
+export function GetParamHistory() {
+  return window['go']['main']['App']['GetParamHistory']();
+}
+
+export function GetQuickCommands() {
+  return window['go']['main']['App']['GetQuickCommands']();
+}
+
 export function GetR2Config() {
   return window['go']['main']['App']['GetR2Config']();
 }
@@ -156,6 +164,14 @@ export function SaveConnection(arg1) {
 
 export function SaveFTPConfig(arg1) {
   return window['go']['main']['App']['SaveFTPConfig'](arg1);
+}
+
+export function SaveParamHistory(arg1) {
+  return window['go']['main']['App']['SaveParamHistory'](arg1);
+}
+
+export function SaveQuickCommands(arg1) {
+  return window['go']['main']['App']['SaveQuickCommands'](arg1);
 }
 
 export function SaveR2Config(arg1) {

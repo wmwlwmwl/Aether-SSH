@@ -30,11 +30,13 @@ type Connection struct {
 }
 
 type ConfigManager struct {
-	configDir    string
-	connFile     string
-	davFile      string
-	key          []byte
-	syncModeFile string
+	configDir     string
+	connFile      string
+	davFile       string
+	key           []byte
+	syncModeFile  string
+	quickCmdFile  string
+	paramHistFile string
 }
 
 func NewConfigManager() *ConfigManager {
@@ -49,6 +51,8 @@ func NewConfigManager() *ConfigManager {
 
 	connFile := filepath.Join(dir, "connections.json")
 	davFile := filepath.Join(dir, "webdav.json")
+	quickCmdFile := filepath.Join(dir, "quick_commands.json")
+	paramHistFile := filepath.Join(dir, "param_history.json")
 
 	// 检查是否存在本地独立密钥文件
 	if _, err := os.Stat(keyFile); err == nil {
@@ -69,11 +73,13 @@ func NewConfigManager() *ConfigManager {
 	}
 
 	return &ConfigManager{
-		configDir:    dir,
-		connFile:     connFile,
-		davFile:      davFile,
-		key:          key,
-		syncModeFile: filepath.Join(dir, "sync_mode.json"),
+		configDir:     dir,
+		connFile:      connFile,
+		davFile:       davFile,
+		key:           key,
+		syncModeFile:  filepath.Join(dir, "sync_mode.json"),
+		quickCmdFile:  quickCmdFile,
+		paramHistFile: paramHistFile,
 	}
 }
 
@@ -427,4 +433,34 @@ func (c *ConfigManager) isFTPConfigured() bool {
 func (c *ConfigManager) isSFTPConfigured() bool {
 	conf := c.GetSFTPConfig()
 	return conf != nil && conf.Host != "" && conf.Username != ""
+}
+
+// ─── 快捷命令 ──────────────────────────────────────
+
+// GetQuickCommands 读取快捷命令列表
+func (c *ConfigManager) GetQuickCommands() string {
+	data, err := os.ReadFile(c.quickCmdFile)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+// SaveQuickCommands 保存快捷命令列表（JSON 字符串）
+func (c *ConfigManager) SaveQuickCommands(jsonStr string) error {
+	return os.WriteFile(c.quickCmdFile, []byte(jsonStr), 0600)
+}
+
+// GetParamHistory 读取参数历史
+func (c *ConfigManager) GetParamHistory() string {
+	data, err := os.ReadFile(c.paramHistFile)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+// SaveParamHistory 保存参数历史
+func (c *ConfigManager) SaveParamHistory(jsonStr string) error {
+	return os.WriteFile(c.paramHistFile, []byte(jsonStr), 0600)
 }

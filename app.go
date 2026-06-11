@@ -455,6 +455,26 @@ func (a *App) SyncFromSFTP() (map[string]interface{}, error) {
 	return a.configManager.SyncFromSFTP()
 }
 
+// GetQuickCommands 获取快捷命令列表
+func (a *App) GetQuickCommands() string {
+	return a.configManager.GetQuickCommands()
+}
+
+// SaveQuickCommands 保存快捷命令列表
+func (a *App) SaveQuickCommands(jsonStr string) error {
+	return a.configManager.SaveQuickCommands(jsonStr)
+}
+
+// GetParamHistory 获取参数历史
+func (a *App) GetParamHistory() string {
+	return a.configManager.GetParamHistory()
+}
+
+// SaveParamHistory 保存参数历史
+func (a *App) SaveParamHistory(jsonStr string) error {
+	return a.configManager.SaveParamHistory(jsonStr)
+}
+
 // PingServer pings a server
 func (a *App) PingServer(host string, port int) map[string]interface{} {
 	return PingServer(host, port)
