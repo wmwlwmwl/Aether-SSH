@@ -53,6 +53,7 @@ export default function ServerList({
   sessions,
   activeSessionId,
   viewMode = 'grid',
+  hideSensitive = false,
   onConnect,
   onEdit,
   onDelete,
@@ -62,6 +63,8 @@ export default function ServerList({
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [hoveredId, setHoveredId] = useState(null);
   const menuRef = useRef(null);
+
+  const mask = (text) => hideSensitive ? text.replace(/[^@.:\/\s-]/g, '*') : text;
 
   // Close context menu on outside click
   useEffect(() => {
@@ -187,7 +190,7 @@ export default function ServerList({
                   )}
                 </div>
                 <div className="server-host" style={{ color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {server.username}@{server.host}
+                  {hideSensitive ? mask(`${server.username}@${server.host}`) : `${server.username}@${server.host}:${server.port || 22}`}
                 </div>
               </div>
 
@@ -290,9 +293,9 @@ export default function ServerList({
                     {connected && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--green)', padding: '2px 4px', background: 'rgba(34,197,94,0.1)', borderRadius: 4 }}>CONN</span>}
                   </td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-2)' }}>
-                    {server.host}:{server.port || 22}
+                    {hideSensitive ? mask(server.host) : `${server.host}:${server.port || 22}`}
                   </td>
-                  <td style={{ color: 'var(--text-2)' }}>{server.username}</td>
+                  <td style={{ color: 'var(--text-2)' }}>{hideSensitive ? mask(server.username) : server.username}</td>
                   <td>
                     {ping?.online && ping?.latency !== undefined && ping?.latency !== null ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

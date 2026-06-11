@@ -72,6 +72,8 @@ func NewSSHManager() *SSHManager {
 }
 
 func (m *SSHManager) Connect(sessionId string, conn Connection) error {
+	// 去除密码首尾空白（防止复制粘贴带入不可见字符）
+	conn.Password = strings.TrimSpace(conn.Password)
 	connKey := fmt.Sprintf("%s@%s:%d", conn.Username, conn.Host, conn.Port)
 
 	m.mu.Lock()
@@ -86,9 +88,9 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 		sftpClient = existingEntry.SFTP
 	} else {
 		// Setup auth methods
+		// keyboard-interactive 优先，因为部分服务器不提供 password 方法
 		var authMethods []ssh.AuthMethod
 		if conn.AuthMethod == "password" {
-			authMethods = append(authMethods, ssh.Password(conn.Password))
 			authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
 				answers = make([]string, len(questions))
 				for i := range answers {
@@ -96,6 +98,7 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 				}
 				return answers, nil
 			}))
+			authMethods = append(authMethods, ssh.Password(conn.Password))
 		} else if conn.AuthMethod == "privateKey" {
 			var signer ssh.Signer
 			var err error
@@ -214,23 +217,40 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 				return fmt.Errorf("主机密钥已变更，请在弹窗中确认")
 			}
 
-			// 认证失败（密码错误等）：发送事件通知前端弹出密码输入框
+			// 主机限流会断开连接（EOF）或拒绝认证，重试 5 次（间隔递增）
 			errStr := dialErr.Error()
-			if m.ctx != nil && (strings.Contains(errStr, "unable to authenticate") ||
-				strings.Contains(errStr, "no supported methods remain")) {
-				runtime.EventsEmit(m.ctx, "ssh-auth-failed", map[string]interface{}{
-					"sessionId": sessionId,
-					"connId":    conn.ID,
-					"host":      conn.Host,
-					"port":      conn.Port,
-					"username":  conn.Username,
-					"error":     errStr,
-				})
+			if strings.Contains(errStr, "unable to authenticate") ||
+				strings.Contains(errStr, "no supported methods remain") ||
+				strings.Contains(errStr, "EOF") ||
+				strings.Contains(errStr, "connection reset") ||
+				strings.Contains(errStr, "connection refused") {
+				for retry := 0; retry < 5; retry++ {
+					delay := time.Duration(retry+1) * 3 * time.Second // 3s, 6s, 9s, 12s, 15s
+					time.Sleep(delay)
+					client, dialErr = ssh.Dial("tcp", target, config)
+					if dialErr == nil {
+						goto dialOK
+					}
+				}
+				// 5 次重试均失败，通知前端
+				errStr = dialErr.Error()
+				if m.ctx != nil {
+					runtime.EventsEmit(m.ctx, "ssh-auth-failed", map[string]interface{}{
+						"sessionId": sessionId,
+						"connId":    conn.ID,
+						"host":      conn.Host,
+						"port":      conn.Port,
+						"username":  conn.Username,
+						"error":     errStr,
+					})
+				}
 				return fmt.Errorf("认证失败")
 			}
 
 			return dialErr
 		}
+
+	dialOK:
 
 		var sftpErr error
 		sftpClient, sftpErr = sftp.NewClient(client)
@@ -676,6 +696,16 @@ func (m *SSHManager) GetTerminalCwd(sessionId string) (string, error) {
 		return "", err
 	}
 	cwd := strings.TrimSpace(out)
+	if cwd == "" || cwd == "/" {
+		// 复杂探测失败，用 $HOME 作为回退
+		homeOut, homeErr := m.executeCmdWithClient(client, "echo $HOME")
+		if homeErr == nil {
+			homeDir := strings.TrimSpace(homeOut)
+			if homeDir != "" && homeDir != "/" {
+				return homeDir, nil
+			}
+		}
+	}
 	if cwd == "" {
 		cwd = "/"
 	}

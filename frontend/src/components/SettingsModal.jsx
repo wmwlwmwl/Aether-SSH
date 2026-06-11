@@ -1443,7 +1443,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
             )}
 
             {activeTab === 'sync' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 600 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
                 
                 {/* Provider Selector */}
                 <div style={{ display: 'flex', gap: 8, background: 'var(--bg-2)', padding: 8, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>

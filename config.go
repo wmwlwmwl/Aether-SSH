@@ -448,91 +448,49 @@ func (c *ConfigManager) SetSyncMode(mode string) error {
 	return os.WriteFile(c.syncModeFile, data, 0600)
 }
 
-// AutoSync 自动同步：根据用户选择的同步方式进行同步
+// AutoSync 自动同步：将本地连接状态直接上传到云端（不合并，以本地为准）
 func (c *ConfigManager) AutoSync() {
 	switch c.GetSyncMode() {
 	case "r2":
 		if c.isR2Configured() {
-			_, err := c.SyncFromR2()
-			if err != nil {
-				_, _ = c.BackupToR2()
-			}
+			c.BackupToR2()
 		} else if c.isWebdavConfigured() {
-			_, err := c.SyncFromWebdav()
-			if err != nil {
-				_, _ = c.BackupToWebdav()
-			}
+			c.BackupToWebdav()
 		}
 	case "ftp":
 		if c.isFTPConfigured() {
-			_, err := c.SyncFromFTP()
-			if err != nil {
-				_, _ = c.BackupToFTP()
-			}
+			c.BackupToFTP()
 		} else if c.isWebdavConfigured() {
-			_, err := c.SyncFromWebdav()
-			if err != nil {
-				_, _ = c.BackupToWebdav()
-			}
+			c.BackupToWebdav()
 		}
 	case "sftp":
 		if c.isSFTPConfigured() {
-			_, err := c.SyncFromSFTP()
-			if err != nil {
-				_, _ = c.BackupToSFTP()
-			}
+			c.BackupToSFTP()
 		} else if c.isWebdavConfigured() {
-			_, err := c.SyncFromWebdav()
-			if err != nil {
-				_, _ = c.BackupToWebdav()
-			}
+			c.BackupToWebdav()
 		}
 	case "all":
 		if c.isWebdavConfigured() {
-			_, err := c.SyncFromWebdav()
-			if err != nil {
-				_, _ = c.BackupToWebdav()
-			}
+			c.BackupToWebdav()
 		}
 		if c.isR2Configured() {
-			_, err := c.SyncFromR2()
-			if err != nil {
-				_, _ = c.BackupToR2()
-			}
+			c.BackupToR2()
 		}
 		if c.isFTPConfigured() {
-			_, err := c.SyncFromFTP()
-			if err != nil {
-				_, _ = c.BackupToFTP()
-			}
+			c.BackupToFTP()
 		}
 		if c.isSFTPConfigured() {
-			_, err := c.SyncFromSFTP()
-			if err != nil {
-				_, _ = c.BackupToSFTP()
-			}
+			c.BackupToSFTP()
 		}
 	default: // "webdav"
 		if c.isWebdavConfigured() {
-			_, err := c.SyncFromWebdav()
-			if err != nil {
-				_, _ = c.BackupToWebdav()
-			}
+			c.BackupToWebdav()
 		} else if c.isR2Configured() {
-			_, err := c.SyncFromR2()
-			if err != nil {
-				_, _ = c.BackupToR2()
-			}
+			c.BackupToR2()
 		} else if c.isFTPConfigured() {
-			_, err := c.SyncFromFTP()
-			if err != nil {
-				_, _ = c.BackupToFTP()
-			}
+			c.BackupToFTP()
 		} else if c.isSFTPConfigured() {
-			_, err := c.SyncFromSFTP()
-			if err != nil {
-				_, _ = c.BackupToSFTP()
-			}
+			c.BackupToSFTP()
 		}
 	}
 }

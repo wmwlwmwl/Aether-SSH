@@ -25,6 +25,7 @@ export default function App() {
   const [sessions, setSessions] = useState([]);      // { id, serverId, serverName, host, status, osInfo }
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [activeTerminalId, setActiveTerminalId] = useState(null);
+  const lastTerminalRef = useRef({}); // 记录每个 session 最后选中的终端
   const [contentTab, setContentTab] = useState('terminal'); // 'terminal' | 'files'
   const [showAddServer, setShowAddServer] = useState(false);
   const [editServer, setEditServer] = useState(null);
@@ -37,6 +38,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [monitoringEnabled, setMonitoringEnabled] = useState({}); // { [sessionId]: boolean }
   const [serverListViewMode, setServerListViewMode] = useState(localStorage.getItem('serverListViewMode') || 'grid'); // 'grid' | 'table'
+  const [hideSensitive, setHideSensitive] = useState(localStorage.getItem('hideSensitive') === 'true');
   const [fileManagerPosition, setFileManagerPosition] = useState(localStorage.getItem('fileManagerPosition') || 'tab'); // 'tab' | 'right' | 'bottom'
   
   // ── 新增自动检测更新状态 ──────────────────────────────
@@ -722,7 +724,9 @@ export default function App() {
     const existing = sessions.find((s) => s.serverId === server.id && s.status !== 'closed');
     if (existing) {
       setActiveSessionId(existing.id);
-      setActiveTerminalId(existing.terminals?.[0]?.id || existing.id);
+      const lastTid = lastTerminalRef.current[existing.id];
+      const validTerminal = existing.terminals?.find(t => t.id === lastTid);
+      setActiveTerminalId(validTerminal ? validTerminal.id : (existing.terminals?.[0]?.id || existing.id));
       setContentTab('terminal');
       return;
     }
@@ -812,8 +816,16 @@ export default function App() {
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     if (activeSessionId === sessionId) {
       const remaining = sessions.filter((s) => s.id !== sessionId);
-      setActiveSessionId(remaining.length > 0 ? remaining[remaining.length - 1].id : null);
-      setActiveTerminalId(null);
+      if (remaining.length > 0) {
+        const nextSession = remaining[remaining.length - 1];
+        setActiveSessionId(nextSession.id);
+        const lastTid = lastTerminalRef.current[nextSession.id];
+        const validTerminal = nextSession.terminals?.find(t => t.id === lastTid);
+        setActiveTerminalId(validTerminal ? validTerminal.id : (nextSession.terminals?.[0]?.id || nextSession.id));
+      } else {
+        setActiveSessionId(null);
+        setActiveTerminalId(null);
+      }
     }
   }, [activeSessionId, sessions]);
 
@@ -871,14 +883,29 @@ export default function App() {
         setActiveTerminalId(remaining[remaining.length - 1].id);
       } else {
         // 最后一个终端被关闭，整个 session 也被移除了
-        setActiveTerminalId(null);
         const remainingSessions = sessions.filter(s => s.id !== sessionId);
-        setActiveSessionId(remainingSessions.length > 0 ? remainingSessions[remainingSessions.length - 1].id : null);
+        if (remainingSessions.length > 0) {
+          const nextSession = remainingSessions[remainingSessions.length - 1];
+          setActiveSessionId(nextSession.id);
+          const lastTid = lastTerminalRef.current[nextSession.id];
+          const validTerminal = nextSession.terminals?.find(t => t.id === lastTid);
+          setActiveTerminalId(validTerminal ? validTerminal.id : (nextSession.terminals?.[0]?.id || nextSession.id));
+        } else {
+          setActiveSessionId(null);
+          setActiveTerminalId(null);
+        }
       }
     }
   }, [activeTerminalId, sessions]);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
+
+  // 同步 activeTerminalId 到 ref，记住每个 session 最后选中的终端
+  useEffect(() => {
+    if (activeSessionId && activeTerminalId) {
+      lastTerminalRef.current[activeSessionId] = activeTerminalId;
+    }
+  }, [activeSessionId, activeTerminalId]);
 
   // ── Quick Connect ──────────────────────────────────────────
   const handleQuickConnect = useCallback(() => {
@@ -982,7 +1009,7 @@ export default function App() {
                 <div
                   key={s.id}
                   className={`tab-item no-drag ${activeSessionId === s.id ? 'active' : ''}`}
-                  onClick={() => { setActiveSessionId(s.id); const sess = sessions.find(x => x.id === s.id); setActiveTerminalId(sess?.terminals?.[0]?.id || s.id); }}
+                  onClick={() => { setActiveSessionId(s.id); const sess = sessions.find(x => x.id === s.id); const lastTid = lastTerminalRef.current[s.id]; const validTerminal = sess?.terminals?.find(t => t.id === lastTid); setActiveTerminalId(validTerminal ? validTerminal.id : (sess?.terminals?.[0]?.id || s.id)); }}
                   style={{ height: '28px', minHeight: '28px', display: 'flex', alignItems: 'center', gap: '4px' }}
                 >
                   <span style={{ fontSize: '10px', display: 'inline-block', lineHeight: 1 }}>
@@ -1159,6 +1186,14 @@ export default function App() {
                         📄
                       </button>
                     </div>
+                    <button
+                      className={`btn-icon ${hideSensitive ? 'active' : ''}`}
+                      onClick={() => { const v = !hideSensitive; setHideSensitive(v); localStorage.setItem('hideSensitive', v); }}
+                      title={hideSensitive ? '显示敏感信息' : '隐藏敏感信息'}
+                      style={{ padding: '2px 8px', fontSize: 12, background: hideSensitive ? 'var(--bg-3)' : 'transparent', border: hideSensitive ? '1px solid var(--orange)' : '1px solid rgba(255,255,255,0.1)', borderRadius: 4, cursor: 'pointer', color: hideSensitive ? 'var(--orange)' : 'var(--text-3)' }}
+                    >
+                      {hideSensitive ? '🙈' : '🙉'}
+                    </button>
                   </div>
                   <button
                     className="btn btn-primary btn-sm"
@@ -1176,6 +1211,7 @@ export default function App() {
                     sessions={sessions}
                     activeSessionId={activeSessionId}
                     viewMode={serverListViewMode}
+                    hideSensitive={hideSensitive}
                     onConnect={connectServer}
                     onEdit={(s) => { setEditServer(s); setShowAddServer(true); }}
                     onDelete={handleDeleteServer}
@@ -1253,7 +1289,7 @@ export default function App() {
                   <div
                     key={t.id}
                     className={`terminal-sub-tab ${activeTerminalId === t.id ? 'active' : ''}`}
-                    onClick={() => { setActiveTerminalId(t.id); setContentTab('terminal'); }}
+                    onClick={() => { setActiveTerminalId(t.id); setContentTab('terminal'); lastTerminalRef.current[activeSession.id] = t.id; }}
                     title={t.label}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 4,
