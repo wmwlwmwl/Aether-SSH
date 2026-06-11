@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // decryptAndParse 尝试用 key 解密 data，失败则降级用主密钥解密，并解析为连接列表
@@ -65,4 +66,52 @@ func (c *ConfigManager) mergeAndDedupe(localConns, remoteConns []Connection) []C
 		}
 	}
 	return deduped
+}
+
+// connsEqual 比较两个连接列表是否内容一致（按 ID 排序后比 JSON）
+func connsEqual(a, b []Connection) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa := sortedConnsJSON(a)
+	sb := sortedConnsJSON(b)
+	return sa == sb
+}
+
+func sortedConnsJSON(conns []Connection) string {
+	sorted := make([]Connection, len(conns))
+	copy(sorted, conns)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].ID < sorted[j].ID
+	})
+	data, _ := json.Marshal(sorted)
+	return string(data)
+}
+
+// syncFromProvider 通用的合并同步逻辑：获取远端连接 → 合并 → 保存 → 条件上传
+func (c *ConfigManager) syncFromProvider(
+	fetchRemote func() ([]Connection, error),
+	backup func() (map[string]interface{}, error),
+) (map[string]interface{}, error) {
+	remoteConns, err := fetchRemote()
+	if err != nil {
+		return nil, err
+	}
+
+	localConns := c.GetConnections()
+	deduped := c.mergeAndDedupe(localConns, remoteConns)
+
+	c.saveConnectionsFile(deduped)
+	var backupResult interface{}
+	if !connsEqual(deduped, remoteConns) {
+		backupResult, _ = backup()
+	}
+
+	return map[string]interface{}{
+		"success":     true,
+		"localCount":  len(localConns),
+		"remoteCount": len(remoteConns),
+		"mergedCount": len(deduped),
+		"backup":      backupResult,
+	}, nil
 }

@@ -23,6 +23,7 @@ type SFTPConfig struct {
 	Password   string `json:"password"`
 	PrivateKey string `json:"privateKey"`
 	RemoteDir  string `json:"remoteDir"`
+	MaxBackups int    `json:"maxBackups"`
 }
 
 func (c *ConfigManager) getSFTPKey() []byte {
@@ -81,6 +82,11 @@ func (c *ConfigManager) SaveSFTPConfig(config map[string]string) error {
 		remoteDir += "/"
 	}
 
+	maxBackups := 0
+	if config["maxBackups"] != "" {
+		fmt.Sscanf(config["maxBackups"], "%d", &maxBackups)
+	}
+
 	conf := SFTPConfig{
 		Host:       config["host"],
 		Port:       port,
@@ -89,6 +95,7 @@ func (c *ConfigManager) SaveSFTPConfig(config map[string]string) error {
 		Password:   c.encrypt(password),
 		PrivateKey: c.encrypt(privateKey),
 		RemoteDir:  remoteDir,
+		MaxBackups: maxBackups,
 	}
 	sftpFile := filepath.Join(c.configDir, "sftp.json")
 	data, _ := json.MarshalIndent(conf, "", "  ")
@@ -219,6 +226,32 @@ func (c *ConfigManager) BackupToSFTP() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("写入远程文件失败：%v", err)
 	}
+	f.Close()
+
+	// Prune old backups
+	if conf.MaxBackups > 0 {
+		files, err := client.ReadDir(conf.RemoteDir)
+		if err == nil {
+			type backupEntry struct {
+				name string
+				time time.Time
+			}
+			var backupFiles []backupEntry
+			for _, fi := range files {
+				if !fi.IsDir() && strings.HasPrefix(fi.Name(), "connections_backup_") {
+					backupFiles = append(backupFiles, backupEntry{fi.Name(), fi.ModTime()})
+				}
+			}
+			if len(backupFiles) > conf.MaxBackups {
+				sort.Slice(backupFiles, func(i, j int) bool {
+					return backupFiles[i].time.Before(backupFiles[j].time)
+				})
+				for i := 0; i < len(backupFiles)-conf.MaxBackups; i++ {
+					client.Remove(strings.TrimSuffix(conf.RemoteDir, "/") + "/" + backupFiles[i].name)
+				}
+			}
+		}
+	}
 
 	return map[string]interface{}{
 		"path":  remotePath,
@@ -302,66 +335,52 @@ func (c *ConfigManager) RestoreFromSFTPFile(filename string) (map[string]interfa
 }
 
 func (c *ConfigManager) SyncFromSFTP() (map[string]interface{}, error) {
-	conf := c.GetSFTPConfig()
-	if conf == nil {
-		return nil, fmt.Errorf("SFTP not configured")
-	}
+	return c.syncFromProvider(
+		func() ([]Connection, error) {
+			conf := c.GetSFTPConfig()
+			if conf == nil {
+				return nil, fmt.Errorf("SFTP not configured")
+			}
 
-	client, err := c.newSFTPClient()
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
+			client, err := c.newSFTPClient()
+			if err != nil {
+				return nil, err
+			}
+			defer client.Close()
 
-	files, err := client.ReadDir(conf.RemoteDir)
-	if err != nil {
-		return nil, fmt.Errorf("读取远程目录失败：%v", err)
-	}
+			files, err := client.ReadDir(conf.RemoteDir)
+			if err != nil {
+				return nil, fmt.Errorf("读取远程目录失败：%v", err)
+			}
 
-	// 找最新的备份文件
-	var latestFile string
-	var latestTime time.Time
-	for _, f := range files {
-		if !f.IsDir() && f.ModTime().After(latestTime) {
-			latestTime = f.ModTime()
-			latestFile = f.Name()
-		}
-	}
-	if latestFile == "" {
-		return nil, fmt.Errorf("云端没有备份文件")
-	}
+			var latestFile string
+			var latestTime time.Time
+			for _, f := range files {
+				if !f.IsDir() && f.ModTime().After(latestTime) {
+					latestTime = f.ModTime()
+					latestFile = f.Name()
+				}
+			}
+			if latestFile == "" {
+				return nil, fmt.Errorf("云端没有备份文件")
+			}
 
-	// 下载并解密
-	remotePath := strings.TrimSuffix(conf.RemoteDir, "/") + "/" + latestFile
-	rf, err := client.Open(remotePath)
-	if err != nil {
-		return nil, err
-	}
-	defer rf.Close()
+			remotePath := strings.TrimSuffix(conf.RemoteDir, "/") + "/" + latestFile
+			rf, err := client.Open(remotePath)
+			if err != nil {
+				return nil, err
+			}
+			defer rf.Close()
 
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(rf)
-	if err != nil {
-		return nil, err
-	}
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(rf)
+			if err != nil {
+				return nil, err
+			}
 
-	key := c.getSFTPKey()
-	remoteConns, err := c.decryptAndParse(buf.String(), key)
-	if err != nil {
-		return nil, err
-	}
-
-	localConns := c.GetConnections()
-	deduped := c.mergeAndDedupe(localConns, remoteConns)
-
-	c.saveConnectionsFile(deduped)
-	backupResult, _ := c.BackupToSFTP()
-
-	return map[string]interface{}{
-		"success":     true,
-		"localCount":  len(localConns),
-		"remoteCount": len(remoteConns),
-		"mergedCount": len(deduped),
-		"backup":      backupResult,
-	}, nil
+			key := c.getSFTPKey()
+			return c.decryptAndParse(buf.String(), key)
+		},
+		c.BackupToSFTP,
+	)
 }

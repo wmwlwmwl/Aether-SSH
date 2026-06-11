@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/studio-b12/gowebdav"
@@ -213,6 +215,7 @@ type WebdavConfig struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
 	RemotePath string `json:"remotePath"`
+	MaxBackups int    `json:"maxBackups"`
 }
 
 func (c *ConfigManager) GetWebdavConfig() map[string]string {
@@ -227,6 +230,7 @@ func (c *ConfigManager) GetWebdavConfig() map[string]string {
 		"username":   c.decrypt(conf.Username),
 		"password":   c.decrypt(conf.Password),
 		"remotePath": conf.RemotePath,
+		"maxBackups": fmt.Sprintf("%d", conf.MaxBackups),
 	}
 }
 
@@ -248,11 +252,17 @@ func (c *ConfigManager) SaveWebdavConfig(config map[string]string) error {
 		}
 	}
 
+	maxBackups := 0
+	if config["maxBackups"] != "" {
+		fmt.Sscanf(config["maxBackups"], "%d", &maxBackups)
+	}
+
 	conf := WebdavConfig{
 		Url:        config["url"],
 		Username:   c.encrypt(config["username"]),
 		Password:   c.encrypt(pass),
 		RemotePath: config["remotePath"],
+		MaxBackups: maxBackups,
 	}
 	if conf.RemotePath == "" {
 		conf.RemotePath = "/Aether/"
@@ -292,6 +302,34 @@ func (c *ConfigManager) BackupToWebdav() (map[string]interface{}, error) {
 	err = client.Write(remoteFile, []byte(encryptedData), 0644)
 	if err != nil {
 		return nil, err
+	}
+
+	// Prune old backups if maxBackups is set
+	var pruneMax int
+	fmt.Sscanf(confMap["maxBackups"], "%d", &pruneMax)
+	if pruneMax > 0 {
+		files, err := client.ReadDir(remotePath)
+		if err == nil {
+			type backupEntry struct {
+				name string
+				time time.Time
+			}
+			var backupFiles []backupEntry
+			for _, f := range files {
+				if !f.IsDir() && strings.HasPrefix(f.Name(), "connections_backup_") {
+					backupFiles = append(backupFiles, backupEntry{f.Name(), f.ModTime()})
+				}
+			}
+			if len(backupFiles) > pruneMax {
+				sort.Slice(backupFiles, func(i, j int) bool {
+					return backupFiles[i].time.Before(backupFiles[j].time)
+				})
+				toDelete := len(backupFiles) - pruneMax
+				for i := 0; i < toDelete; i++ {
+					client.Remove(filepath.ToSlash(filepath.Join(remotePath, backupFiles[i].name)))
+				}
+			}
+		}
 	}
 
 	return map[string]interface{}{
@@ -353,56 +391,42 @@ func (c *ConfigManager) RestoreFromWebdavFile(filename string) (map[string]inter
 
 // SyncFromWebdav 合并同步：按 ID 合并本地与云端（双向），不丢失任何一端的数据
 func (c *ConfigManager) SyncFromWebdav() (map[string]interface{}, error) {
-	confMap := c.GetWebdavConfig()
-	if confMap == nil {
-		return nil, fmt.Errorf("WebDAV not configured")
-	}
-	client := gowebdav.NewClient(confMap["url"], confMap["username"], confMap["password"])
+	return c.syncFromProvider(
+		func() ([]Connection, error) {
+			confMap := c.GetWebdavConfig()
+			if confMap == nil {
+				return nil, fmt.Errorf("WebDAV not configured")
+			}
+			client := gowebdav.NewClient(confMap["url"], confMap["username"], confMap["password"])
 
-	files, err := client.ReadDir(confMap["remotePath"])
-	if err != nil {
-		return nil, fmt.Errorf("读取远程目录失败：%v", err)
-	}
+			files, err := client.ReadDir(confMap["remotePath"])
+			if err != nil {
+				return nil, fmt.Errorf("读取远程目录失败：%v", err)
+			}
 
-	// 找最新的备份文件
-	var latestFile string
-	var latestTime time.Time
-	for _, f := range files {
-		if !f.IsDir() && f.ModTime().After(latestTime) {
-			latestTime = f.ModTime()
-			latestFile = f.Name()
-		}
-	}
-	if latestFile == "" {
-		return nil, fmt.Errorf("云端没有备份文件")
-	}
+			var latestFile string
+			var latestTime time.Time
+			for _, f := range files {
+				if !f.IsDir() && f.ModTime().After(latestTime) {
+					latestTime = f.ModTime()
+					latestFile = f.Name()
+				}
+			}
+			if latestFile == "" {
+				return nil, fmt.Errorf("云端没有备份文件")
+			}
 
-	// 下载并解密
-	remoteFile := filepath.ToSlash(filepath.Join(confMap["remotePath"], latestFile))
-	data, err := client.Read(remoteFile)
-	if err != nil {
-		return nil, err
-	}
+			remoteFile := filepath.ToSlash(filepath.Join(confMap["remotePath"], latestFile))
+			data, err := client.Read(remoteFile)
+			if err != nil {
+				return nil, err
+			}
 
-	key := c.getWebdavKey()
-	remoteConns, err := c.decryptAndParse(string(data), key)
-	if err != nil {
-		return nil, err
-	}
-
-	localConns := c.GetConnections()
-	deduped := c.mergeAndDedupe(localConns, remoteConns)
-
-	c.saveConnectionsFile(deduped)
-	backupResult, _ := c.BackupToWebdav()
-
-	return map[string]interface{}{
-		"success":     true,
-		"localCount":  len(localConns),
-		"remoteCount": len(remoteConns),
-		"mergedCount": len(deduped),
-		"backup":      backupResult,
-	}, nil
+			key := c.getWebdavKey()
+			return c.decryptAndParse(string(data), key)
+		},
+		c.BackupToWebdav,
+	)
 }
 
 // GetSyncMode 获取自动同步模式：webdav / r2 / all

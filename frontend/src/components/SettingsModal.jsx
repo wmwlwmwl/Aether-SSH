@@ -128,6 +128,7 @@ const defaultWebdavForm = {
   username: '',
   password: '',
   remotePath: '/Aether/',
+  maxBackups: '',
 };
 
 const defaultR2Form = {
@@ -137,6 +138,7 @@ const defaultR2Form = {
   endpoint: '',
   region: 'auto',
   prefix: 'Aether/',
+  maxBackups: '',
 };
 
 const defaultFTPForm = {
@@ -145,6 +147,7 @@ const defaultFTPForm = {
   username: '',
   password: '',
   remoteDir: '/Aether/',
+  maxBackups: '',
 };
 
 const defaultSFTPForm = {
@@ -155,6 +158,7 @@ const defaultSFTPForm = {
   authMethod: 'password',
   privateKey: '',
   remoteDir: '/Aether/',
+  maxBackups: '',
 };
 
 export default function SettingsModal({ onClose, addToast, onRestored }) {
@@ -483,6 +487,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
             username: data.username || '',
             password: data.password || '',
             remotePath: data.remotePath || f.remotePath,
+            maxBackups: data.maxBackups || '',
           }));
           if (data.username) {
             setIsConfigured(true);
@@ -504,6 +509,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                 endpoint: data.endpoint || '',
                 region: data.region || f.region,
                 prefix: data.prefix || f.prefix,
+                maxBackups: data.maxBackups || '',
               }));
               if (data.bucket && data.endpoint) {
                 setR2Configured(true);
@@ -531,13 +537,13 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
     Promise.all([
       AppGo.GetFTPConfig().then(c => {
         if (c && c.host) {
-          setFtpForm(prev => ({ ...prev, host: c.host, port: c.port, username: c.username, password: c.password, remoteDir: c.remoteDir }));
+          setFtpForm(prev => ({ ...prev, host: c.host, port: c.port, username: c.username, password: c.password, remoteDir: c.remoteDir, maxBackups: c.maxBackups || '' }));
           setFtpConfigured(true);
         }
       }).catch(() => {}),
       AppGo.GetSFTPConfig().then(c => {
         if (c && c.host) {
-          setSftpForm(prev => ({ ...prev, host: c.host, port: c.port, username: c.username, password: c.password, authMethod: c.authMethod || 'password', privateKey: c.privateKey || '', remoteDir: c.remoteDir }));
+          setSftpForm(prev => ({ ...prev, host: c.host, port: c.port, username: c.username, password: c.password, authMethod: c.authMethod || 'password', privateKey: c.privateKey || '', remoteDir: c.remoteDir, maxBackups: c.maxBackups || '' }));
           setSftpConfigured(true);
         }
       }).catch(() => {}),
@@ -711,7 +717,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   const handleSaveFTP = async () => {
     setFtpLoading(true);
     try {
-      await AppGo.SaveFTPConfig({ host: ftpForm.host, port: String(ftpForm.port), username: ftpForm.username, password: ftpForm.password, remoteDir: ftpForm.remoteDir });
+      await AppGo.SaveFTPConfig({ host: ftpForm.host, port: String(ftpForm.port), username: ftpForm.username, password: ftpForm.password, remoteDir: ftpForm.remoteDir, maxBackups: String(ftpForm.maxBackups || '') });
       setFtpConfigured(true);
       setFtpEditing(false);
       addToast('FTP 配置已保存', 'success');
@@ -743,7 +749,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   const handleSaveSFTP = async () => {
     setSftpLoading(true);
     try {
-      await AppGo.SaveSFTPConfig({ host: sftpForm.host, port: String(sftpForm.port), username: sftpForm.username, password: sftpForm.password, authMethod: sftpForm.authMethod, privateKey: sftpForm.privateKey, remoteDir: sftpForm.remoteDir });
+      await AppGo.SaveSFTPConfig({ host: sftpForm.host, port: String(sftpForm.port), username: sftpForm.username, password: sftpForm.password, authMethod: sftpForm.authMethod, privateKey: sftpForm.privateKey, remoteDir: sftpForm.remoteDir, maxBackups: String(sftpForm.maxBackups || '') });
       setSftpConfigured(true);
       setSftpEditing(false);
       addToast('SFTP 配置已保存', 'success');
@@ -835,7 +841,15 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                 key={tab.id}
                 className={`sidebar-menu-item ${activeTab === tab.id ? 'active' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
-                style={{ padding: '8px 12px', borderRadius: 'var(--radius-sm)' }}
+                style={{ 
+                  padding: '8px 12px', 
+                  borderRadius: 'var(--radius-sm)', 
+                  cursor: 'pointer',
+                  color: activeTab === tab.id ? 'var(--text-1)' : 'var(--text-3)',
+                  background: activeTab === tab.id ? 'var(--bg-2)' : 'transparent',
+                  fontWeight: activeTab === tab.id ? 600 : 400,
+                  transition: 'all 0.15s',
+                }}
               >
                 <span>{tab.icon}</span> {t.tabs[tab.id]}
               </div>
@@ -1569,6 +1583,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                             <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>备份目录</span>
                             <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{webdavForm.remotePath}</span>
                           </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>保留份数</span>
+                            <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{webdavForm.maxBackups || '不限'}</span>
+                          </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', gridColumn: '1 / -1' }}>
                             <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>服务器地址</span>
                             <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{webdavForm.url}</span>
@@ -1592,6 +1610,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         <div className="form-group">
                           <label className="form-label">远程保存目录</label>
                           <input className="input" value={webdavForm.remotePath} onChange={setWebdav('remotePath')} />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">保留份数 (0=不限)</label>
+                          <input className="input" type="number" min="0" value={webdavForm.maxBackups} onChange={setWebdav('maxBackups')} placeholder="0" />
                         </div>
 
                         <div style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'center' }}>
@@ -1694,6 +1716,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                             <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>端点地址</span>
                             <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r2Form.endpoint}</span>
                           </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>保留份数</span>
+                            <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{r2Form.maxBackups || '不限'}</span>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -1721,6 +1747,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         <div className="form-group">
                           <label className="form-label">前缀 (Prefix)</label>
                           <input className="input" value={r2Form.prefix} onChange={setR2('prefix')} placeholder="Aether/" />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">保留份数 (0=不限)</label>
+                          <input className="input" type="number" min="0" value={r2Form.maxBackups} onChange={setR2('maxBackups')} placeholder="0" />
                         </div>
 
                         <div style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'center' }}>
@@ -1827,6 +1857,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                             <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>远程目录</span>
                             <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{ftpForm.remoteDir}</span>
                           </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>保留份数</span>
+                            <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{ftpForm.maxBackups || '不限'}</span>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -1850,6 +1884,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         <div className="form-group">
                           <label className="form-label">远程保存目录</label>
                           <input className="input" value={ftpForm.remoteDir} onChange={setFTP('remoteDir')} />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">保留份数 (0=不限)</label>
+                          <input className="input" type="number" min="0" value={ftpForm.maxBackups} onChange={setFTP('maxBackups')} placeholder="0" />
                         </div>
 
                         <div style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'center' }}>
@@ -1956,6 +1994,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                             <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>远程目录</span>
                             <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{sftpForm.remoteDir}</span>
                           </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-2)', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>保留份数</span>
+                            <span style={{ fontSize: 14, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{sftpForm.maxBackups || '不限'}</span>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -2007,6 +2049,10 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         <div className="form-group">
                           <label className="form-label">远程保存目录</label>
                           <input className="input" value={sftpForm.remoteDir} onChange={setSFTP('remoteDir')} />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">保留份数 (0=不限)</label>
+                          <input className="input" type="number" min="0" value={sftpForm.maxBackups} onChange={setSFTP('maxBackups')} placeholder="0" />
                         </div>
 
                         <div style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'center' }}>

@@ -336,6 +336,7 @@ func (a *App) GetR2Config() map[string]interface{} {
 		"endpoint":        conf.Endpoint,
 		"region":          conf.Region,
 		"prefix":          conf.Prefix,
+		"maxBackups":      conf.MaxBackups,
 	}
 }
 
@@ -379,11 +380,12 @@ func (a *App) GetFTPConfig() map[string]interface{} {
 		return nil
 	}
 	return map[string]interface{}{
-		"host":      conf.Host,
-		"port":      conf.Port,
-		"username":  conf.Username,
-		"password":  conf.Password,
-		"remoteDir": conf.RemoteDir,
+		"host":       conf.Host,
+		"port":       conf.Port,
+		"username":   conf.Username,
+		"password":   conf.Password,
+		"remoteDir":  conf.RemoteDir,
+		"maxBackups": conf.MaxBackups,
 	}
 }
 
@@ -425,6 +427,7 @@ func (a *App) GetSFTPConfig() map[string]interface{} {
 		"password":   conf.Password,
 		"privateKey": conf.PrivateKey,
 		"remoteDir":  conf.RemoteDir,
+		"maxBackups": conf.MaxBackups,
 	}
 }
 

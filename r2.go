@@ -23,6 +23,7 @@ type R2Config struct {
 	Endpoint        string `json:"endpoint"`
 	Region          string `json:"region"`
 	Prefix          string `json:"prefix"`
+	MaxBackups      int    `json:"maxBackups"`
 }
 
 func (c *ConfigManager) getR2Key() []byte {
@@ -78,6 +79,11 @@ func (c *ConfigManager) SaveR2Config(config map[string]string) error {
 		region = "auto"
 	}
 
+	maxBackups := 0
+	if config["maxBackups"] != "" {
+		fmt.Sscanf(config["maxBackups"], "%d", &maxBackups)
+	}
+
 	conf := R2Config{
 		AccessKeyID:     c.encrypt(accessKey),
 		SecretAccessKey: c.encrypt(secretKey),
@@ -85,6 +91,7 @@ func (c *ConfigManager) SaveR2Config(config map[string]string) error {
 		Endpoint:        sanitizeEndpoint(config["endpoint"]),
 		Region:          region,
 		Prefix:          prefix,
+		MaxBackups:      maxBackups,
 	}
 	r2File := filepath.Join(c.configDir, "r2.json")
 	data, _ := json.MarshalIndent(conf, "", "  ")
@@ -160,6 +167,35 @@ func (c *ConfigManager) BackupToR2() (map[string]interface{}, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// Prune old backups
+	if conf.MaxBackups > 0 {
+		ctx := context.Background()
+		objects := cli.ListObjects(ctx, conf.Bucket, minio.ListObjectsOptions{
+			Prefix: conf.Prefix,
+		})
+		type backupEntry struct {
+			name string
+			time time.Time
+		}
+		var backupFiles []backupEntry
+		for obj := range objects {
+			if obj.Err != nil {
+				continue
+			}
+			if strings.HasPrefix(obj.Key, conf.Prefix+"connections_backup_") {
+				backupFiles = append(backupFiles, backupEntry{obj.Key, obj.LastModified})
+			}
+		}
+		if len(backupFiles) > conf.MaxBackups {
+			sort.Slice(backupFiles, func(i, j int) bool {
+				return backupFiles[i].time.Before(backupFiles[j].time)
+			})
+			for i := 0; i < len(backupFiles)-conf.MaxBackups; i++ {
+				cli.RemoveObject(ctx, conf.Bucket, backupFiles[i].name, minio.RemoveObjectOptions{})
+			}
+		}
 	}
 
 	return map[string]interface{}{
@@ -241,67 +277,54 @@ func (c *ConfigManager) RestoreFromR2File(objectKey string) (map[string]interfac
 }
 
 func (c *ConfigManager) SyncFromR2() (map[string]interface{}, error) {
-	conf := c.GetR2Config()
-	if conf == nil {
-		return nil, fmt.Errorf("R2 not configured")
-	}
-	cli, err := c.newR2Client()
-	if err != nil {
-		return nil, err
-	}
+	return c.syncFromProvider(
+		func() ([]Connection, error) {
+			conf := c.GetR2Config()
+			if conf == nil {
+				return nil, fmt.Errorf("R2 not configured")
+			}
+			cli, err := c.newR2Client()
+			if err != nil {
+				return nil, err
+			}
 
-	ctx := context.Background()
-	objects := cli.ListObjects(ctx, conf.Bucket, minio.ListObjectsOptions{
-		Prefix: conf.Prefix,
-	})
+			ctx := context.Background()
+			objects := cli.ListObjects(ctx, conf.Bucket, minio.ListObjectsOptions{
+				Prefix: conf.Prefix,
+			})
 
-	var latestObj string
-	var latestTime time.Time
-	for obj := range objects {
-		if obj.Err != nil {
-			continue
-		}
-		if obj.LastModified.After(latestTime) {
-			latestTime = obj.LastModified
-			latestObj = obj.Key
-		}
-	}
-	if latestObj == "" {
-		return nil, fmt.Errorf("云端没有备份文件")
-	}
+			var latestObj string
+			var latestTime time.Time
+			for obj := range objects {
+				if obj.Err != nil {
+					continue
+				}
+				if obj.LastModified.After(latestTime) {
+					latestTime = obj.LastModified
+					latestObj = obj.Key
+				}
+			}
+			if latestObj == "" {
+				return nil, fmt.Errorf("云端没有备份文件")
+			}
 
-	// 下载
-	obj, err := cli.GetObject(ctx, conf.Bucket, latestObj, minio.GetObjectOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer obj.Close()
+			obj, err := cli.GetObject(ctx, conf.Bucket, latestObj, minio.GetObjectOptions{})
+			if err != nil {
+				return nil, err
+			}
+			defer obj.Close()
 
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(obj)
-	if err != nil {
-		return nil, err
-	}
+			buf := new(bytes.Buffer)
+			_, err = buf.ReadFrom(obj)
+			if err != nil {
+				return nil, err
+			}
 
-	key := c.getR2Key()
-	remoteConns, err := c.decryptAndParse(buf.String(), key)
-	if err != nil {
-		return nil, err
-	}
-
-	localConns := c.GetConnections()
-	deduped := c.mergeAndDedupe(localConns, remoteConns)
-
-	c.saveConnectionsFile(deduped)
-	backupResult, _ := c.BackupToR2()
-
-	return map[string]interface{}{
-		"success":     true,
-		"localCount":  len(localConns),
-		"remoteCount": len(remoteConns),
-		"mergedCount": len(deduped),
-		"backup":      backupResult,
-	}, nil
+			key := c.getR2Key()
+			return c.decryptAndParse(buf.String(), key)
+		},
+		c.BackupToR2,
+	)
 }
 
 func (c *ConfigManager) AutoSyncToR2() {
