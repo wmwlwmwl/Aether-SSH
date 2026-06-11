@@ -201,12 +201,12 @@ export default function FileManager({ sessionId, addToast }) {
 
   // Breadcrumb parts
   const pathParts = currentPath === '/'
-    ? [{ label: '/', path: '/' }]
+    ? [{ label: '目录根', path: '/' }]
     : currentPath.split('/').filter(Boolean).reduce((acc, part, i, arr) => {
         const path = '/' + arr.slice(0, i + 1).join('/');
         acc.push({ label: part, path });
         return acc;
-      }, [{ label: '/', path: '/' }]);
+      }, [{ label: '目录根', path: '/' }]);
 
   // Navigate into folder
   const navigate = (item) => {
