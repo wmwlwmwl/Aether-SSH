@@ -6,6 +6,18 @@ export function AcceptHostKeyChange(arg1, arg2) {
   return window['go']['main']['App']['AcceptHostKeyChange'](arg1, arg2);
 }
 
+export function BackupToFTP() {
+  return window['go']['main']['App']['BackupToFTP']();
+}
+
+export function BackupToR2() {
+  return window['go']['main']['App']['BackupToR2']();
+}
+
+export function BackupToSFTP() {
+  return window['go']['main']['App']['BackupToSFTP']();
+}
+
 export function BackupToWebdav() {
   return window['go']['main']['App']['BackupToWebdav']();
 }
@@ -38,6 +50,22 @@ export function GetConnections() {
   return window['go']['main']['App']['GetConnections']();
 }
 
+export function GetFTPConfig() {
+  return window['go']['main']['App']['GetFTPConfig']();
+}
+
+export function GetR2Config() {
+  return window['go']['main']['App']['GetR2Config']();
+}
+
+export function GetSFTPConfig() {
+  return window['go']['main']['App']['GetSFTPConfig']();
+}
+
+export function GetSyncMode() {
+  return window['go']['main']['App']['GetSyncMode']();
+}
+
 export function GetTerminalCwd(arg1) {
   return window['go']['main']['App']['GetTerminalCwd'](arg1);
 }
@@ -56,6 +84,18 @@ export function IsPortableVersion() {
 
 export function ListDir(arg1, arg2) {
   return window['go']['main']['App']['ListDir'](arg1, arg2);
+}
+
+export function ListFTPBackups() {
+  return window['go']['main']['App']['ListFTPBackups']();
+}
+
+export function ListR2Backups() {
+  return window['go']['main']['App']['ListR2Backups']();
+}
+
+export function ListSFTPBackups() {
+  return window['go']['main']['App']['ListSFTPBackups']();
 }
 
 export function ListWebdavBackups() {
@@ -94,6 +134,18 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function RestoreFromFTPFile(arg1) {
+  return window['go']['main']['App']['RestoreFromFTPFile'](arg1);
+}
+
+export function RestoreFromR2File(arg1) {
+  return window['go']['main']['App']['RestoreFromR2File'](arg1);
+}
+
+export function RestoreFromSFTPFile(arg1) {
+  return window['go']['main']['App']['RestoreFromSFTPFile'](arg1);
+}
+
 export function RestoreFromWebdavFile(arg1) {
   return window['go']['main']['App']['RestoreFromWebdavFile'](arg1);
 }
@@ -102,12 +154,56 @@ export function SaveConnection(arg1) {
   return window['go']['main']['App']['SaveConnection'](arg1);
 }
 
+export function SaveFTPConfig(arg1) {
+  return window['go']['main']['App']['SaveFTPConfig'](arg1);
+}
+
+export function SaveR2Config(arg1) {
+  return window['go']['main']['App']['SaveR2Config'](arg1);
+}
+
+export function SaveSFTPConfig(arg1) {
+  return window['go']['main']['App']['SaveSFTPConfig'](arg1);
+}
+
 export function SaveWebdavConfig(arg1) {
   return window['go']['main']['App']['SaveWebdavConfig'](arg1);
 }
 
+export function SetSyncMode(arg1) {
+  return window['go']['main']['App']['SetSyncMode'](arg1);
+}
+
+export function SyncFromFTP() {
+  return window['go']['main']['App']['SyncFromFTP']();
+}
+
+export function SyncFromR2() {
+  return window['go']['main']['App']['SyncFromR2']();
+}
+
+export function SyncFromSFTP() {
+  return window['go']['main']['App']['SyncFromSFTP']();
+}
+
+export function SyncFromWebdav() {
+  return window['go']['main']['App']['SyncFromWebdav']();
+}
+
 export function SystemInfo(arg1) {
   return window['go']['main']['App']['SystemInfo'](arg1);
+}
+
+export function TestFTPConnection(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TestFTPConnection'](arg1, arg2, arg3, arg4);
+}
+
+export function TestR2Connection(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TestR2Connection'](arg1, arg2, arg3, arg4);
+}
+
+export function TestSFTPConnection(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['TestSFTPConnection'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function TestWebdavConnection(arg1, arg2, arg3) {

@@ -30,10 +30,11 @@ type Connection struct {
 }
 
 type ConfigManager struct {
-	configDir string
-	connFile  string
-	davFile   string
-	key       []byte
+	configDir    string
+	connFile     string
+	davFile      string
+	key          []byte
+	syncModeFile string
 }
 
 func NewConfigManager() *ConfigManager {
@@ -68,10 +69,11 @@ func NewConfigManager() *ConfigManager {
 	}
 
 	return &ConfigManager{
-		configDir: dir,
-		connFile:  connFile,
-		davFile:   davFile,
-		key:       key,
+		configDir:    dir,
+		connFile:     connFile,
+		davFile:      davFile,
+		key:          key,
+		syncModeFile: filepath.Join(dir, "sync_mode.json"),
 	}
 }
 
@@ -177,7 +179,7 @@ func (c *ConfigManager) SaveConnection(conn Connection) Connection {
 	}
 
 	c.saveConnectionsFile(conns)
-	go c.BackupToWebdav()
+	go c.AutoSyncToWebdav()
 	return conn
 }
 
@@ -201,7 +203,7 @@ func (c *ConfigManager) DeleteConnection(id string) bool {
 		}
 	}
 	c.saveConnectionsFile(filtered)
-	go c.BackupToWebdav()
+	go c.AutoSyncToWebdav()
 	return true
 }
 
@@ -338,24 +340,200 @@ func (c *ConfigManager) RestoreFromWebdavFile(filename string) (map[string]inter
 	}
 
 	key := c.getWebdavKey()
-	decrypted := c.decryptWithKey(string(data), key)
-
-	if decrypted == "" {
-		// 降级尝试使用本地旧密钥解密（兼容老版本备份）
-		decrypted = c.decryptWithKey(string(data), c.key)
-		if decrypted == "" {
-			return nil, fmt.Errorf("解密失败：如果这是旧版本产生的备份，且您之前卸载清理了本地缓存(aether.key)，则受 AES-256 高强加密保护，资料已永久无法恢复。")
-		}
-	}
-
-	var conns []Connection
-	err = json.Unmarshal([]byte(decrypted), &conns)
+	conns, err := c.decryptAndParse(string(data), key)
 	if err != nil {
-		return nil, fmt.Errorf("解析备份文件出错：%v", err)
+		return nil, err
 	}
 
 	c.saveConnectionsFile(conns)
 	return map[string]interface{}{
 		"success": true,
 	}, nil
+}
+
+// SyncFromWebdav 合并同步：按 ID 合并本地与云端（双向），不丢失任何一端的数据
+func (c *ConfigManager) SyncFromWebdav() (map[string]interface{}, error) {
+	confMap := c.GetWebdavConfig()
+	if confMap == nil {
+		return nil, fmt.Errorf("WebDAV not configured")
+	}
+	client := gowebdav.NewClient(confMap["url"], confMap["username"], confMap["password"])
+
+	files, err := client.ReadDir(confMap["remotePath"])
+	if err != nil {
+		return nil, fmt.Errorf("读取远程目录失败：%v", err)
+	}
+
+	// 找最新的备份文件
+	var latestFile string
+	var latestTime time.Time
+	for _, f := range files {
+		if !f.IsDir() && f.ModTime().After(latestTime) {
+			latestTime = f.ModTime()
+			latestFile = f.Name()
+		}
+	}
+	if latestFile == "" {
+		return nil, fmt.Errorf("云端没有备份文件")
+	}
+
+	// 下载并解密
+	remoteFile := filepath.ToSlash(filepath.Join(confMap["remotePath"], latestFile))
+	data, err := client.Read(remoteFile)
+	if err != nil {
+		return nil, err
+	}
+
+	key := c.getWebdavKey()
+	remoteConns, err := c.decryptAndParse(string(data), key)
+	if err != nil {
+		return nil, err
+	}
+
+	localConns := c.GetConnections()
+	deduped := c.mergeAndDedupe(localConns, remoteConns)
+
+	c.saveConnectionsFile(deduped)
+	backupResult, _ := c.BackupToWebdav()
+
+	return map[string]interface{}{
+		"success":     true,
+		"localCount":  len(localConns),
+		"remoteCount": len(remoteConns),
+		"mergedCount": len(deduped),
+		"backup":      backupResult,
+	}, nil
+}
+
+// GetSyncMode 获取自动同步模式：webdav / r2 / all
+func (c *ConfigManager) GetSyncMode() string {
+	data, err := os.ReadFile(c.syncModeFile)
+	if err != nil {
+		return "webdav" // 默认 WebDAV
+	}
+	var mode string
+	if json.Unmarshal(data, &mode) != nil || mode == "" {
+		return "webdav"
+	}
+	return mode
+}
+
+// SetSyncMode 设置自动同步模式
+func (c *ConfigManager) SetSyncMode(mode string) error {
+	data, _ := json.Marshal(mode)
+	return os.WriteFile(c.syncModeFile, data, 0600)
+}
+
+// AutoSync 自动同步：根据用户选择的同步方式进行同步
+func (c *ConfigManager) AutoSync() {
+	switch c.GetSyncMode() {
+	case "r2":
+		if c.isR2Configured() {
+			_, err := c.SyncFromR2()
+			if err != nil {
+				_, _ = c.BackupToR2()
+			}
+		} else if c.isWebdavConfigured() {
+			_, err := c.SyncFromWebdav()
+			if err != nil {
+				_, _ = c.BackupToWebdav()
+			}
+		}
+	case "ftp":
+		if c.isFTPConfigured() {
+			_, err := c.SyncFromFTP()
+			if err != nil {
+				_, _ = c.BackupToFTP()
+			}
+		} else if c.isWebdavConfigured() {
+			_, err := c.SyncFromWebdav()
+			if err != nil {
+				_, _ = c.BackupToWebdav()
+			}
+		}
+	case "sftp":
+		if c.isSFTPConfigured() {
+			_, err := c.SyncFromSFTP()
+			if err != nil {
+				_, _ = c.BackupToSFTP()
+			}
+		} else if c.isWebdavConfigured() {
+			_, err := c.SyncFromWebdav()
+			if err != nil {
+				_, _ = c.BackupToWebdav()
+			}
+		}
+	case "all":
+		if c.isWebdavConfigured() {
+			_, err := c.SyncFromWebdav()
+			if err != nil {
+				_, _ = c.BackupToWebdav()
+			}
+		}
+		if c.isR2Configured() {
+			_, err := c.SyncFromR2()
+			if err != nil {
+				_, _ = c.BackupToR2()
+			}
+		}
+		if c.isFTPConfigured() {
+			_, err := c.SyncFromFTP()
+			if err != nil {
+				_, _ = c.BackupToFTP()
+			}
+		}
+		if c.isSFTPConfigured() {
+			_, err := c.SyncFromSFTP()
+			if err != nil {
+				_, _ = c.BackupToSFTP()
+			}
+		}
+	default: // "webdav"
+		if c.isWebdavConfigured() {
+			_, err := c.SyncFromWebdav()
+			if err != nil {
+				_, _ = c.BackupToWebdav()
+			}
+		} else if c.isR2Configured() {
+			_, err := c.SyncFromR2()
+			if err != nil {
+				_, _ = c.BackupToR2()
+			}
+		} else if c.isFTPConfigured() {
+			_, err := c.SyncFromFTP()
+			if err != nil {
+				_, _ = c.BackupToFTP()
+			}
+		} else if c.isSFTPConfigured() {
+			_, err := c.SyncFromSFTP()
+			if err != nil {
+				_, _ = c.BackupToSFTP()
+			}
+		}
+	}
+}
+
+func (c *ConfigManager) isWebdavConfigured() bool {
+	conf := c.GetWebdavConfig()
+	return conf != nil && conf["url"] != ""
+}
+
+func (c *ConfigManager) isR2Configured() bool {
+	conf := c.GetR2Config()
+	return conf != nil && conf.Bucket != "" && conf.Endpoint != ""
+}
+
+func (c *ConfigManager) isFTPConfigured() bool {
+	conf := c.GetFTPConfig()
+	return conf != nil && conf.Host != "" && conf.Username != ""
+}
+
+func (c *ConfigManager) isSFTPConfigured() bool {
+	conf := c.GetSFTPConfig()
+	return conf != nil && conf.Host != "" && conf.Username != ""
+}
+
+// AutoSyncToWebdav 保留兼容：由 AutoSync 统一处理
+func (c *ConfigManager) AutoSyncToWebdav() {
+	c.AutoSync()
 }

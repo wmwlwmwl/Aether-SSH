@@ -107,6 +107,9 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 	}
+
+	// 启动时后台同步
+	go a.configManager.AutoSync()
 }
 
 // GetWsPort 返回本地 WebSocket 服务器端口，前端用于连接终端
@@ -314,6 +317,139 @@ func (a *App) ListWebdavBackups() ([]map[string]interface{}, error) {
 
 func (a *App) RestoreFromWebdavFile(filename string) (map[string]interface{}, error) {
 	return a.configManager.RestoreFromWebdavFile(filename)
+}
+
+func (a *App) SyncFromWebdav() (map[string]interface{}, error) {
+	return a.configManager.SyncFromWebdav()
+}
+
+// R2 Methods
+func (a *App) GetR2Config() map[string]interface{} {
+	conf := a.configManager.GetR2Config()
+	if conf == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"accessKeyId":     conf.AccessKeyID,
+		"secretAccessKey": conf.SecretAccessKey,
+		"bucket":          conf.Bucket,
+		"endpoint":        conf.Endpoint,
+		"region":          conf.Region,
+		"prefix":          conf.Prefix,
+	}
+}
+
+func (a *App) SaveR2Config(config map[string]string) error {
+	return a.configManager.SaveR2Config(config)
+}
+
+func (a *App) TestR2Connection(accessKeyId, secretAccessKey, bucket, endpoint string) error {
+	return a.configManager.TestR2Connection(accessKeyId, secretAccessKey, bucket, endpoint)
+}
+
+func (a *App) BackupToR2() (map[string]interface{}, error) {
+	return a.configManager.BackupToR2()
+}
+
+func (a *App) ListR2Backups() ([]map[string]interface{}, error) {
+	return a.configManager.ListR2Backups()
+}
+
+func (a *App) RestoreFromR2File(objectKey string) (map[string]interface{}, error) {
+	return a.configManager.RestoreFromR2File(objectKey)
+}
+
+func (a *App) SyncFromR2() (map[string]interface{}, error) {
+	return a.configManager.SyncFromR2()
+}
+
+// SyncMode methods
+func (a *App) GetSyncMode() string {
+	return a.configManager.GetSyncMode()
+}
+
+func (a *App) SetSyncMode(mode string) error {
+	return a.configManager.SetSyncMode(mode)
+}
+
+// FTP Methods
+func (a *App) GetFTPConfig() map[string]interface{} {
+	conf := a.configManager.GetFTPConfig()
+	if conf == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"host":      conf.Host,
+		"port":      conf.Port,
+		"username":  conf.Username,
+		"password":  conf.Password,
+		"remoteDir": conf.RemoteDir,
+	}
+}
+
+func (a *App) SaveFTPConfig(config map[string]string) error {
+	return a.configManager.SaveFTPConfig(config)
+}
+
+func (a *App) TestFTPConnection(host string, port int, username, password string) error {
+	return a.configManager.TestFTPConnection(host, port, username, password)
+}
+
+func (a *App) BackupToFTP() (map[string]interface{}, error) {
+	return a.configManager.BackupToFTP()
+}
+
+func (a *App) ListFTPBackups() ([]map[string]interface{}, error) {
+	return a.configManager.ListFTPBackups()
+}
+
+func (a *App) RestoreFromFTPFile(filename string) (map[string]interface{}, error) {
+	return a.configManager.RestoreFromFTPFile(filename)
+}
+
+func (a *App) SyncFromFTP() (map[string]interface{}, error) {
+	return a.configManager.SyncFromFTP()
+}
+
+// SFTP Methods
+func (a *App) GetSFTPConfig() map[string]interface{} {
+	conf := a.configManager.GetSFTPConfig()
+	if conf == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"host":       conf.Host,
+		"port":       conf.Port,
+		"username":   conf.Username,
+		"authMethod": conf.AuthMethod,
+		"password":   conf.Password,
+		"privateKey": conf.PrivateKey,
+		"remoteDir":  conf.RemoteDir,
+	}
+}
+
+func (a *App) SaveSFTPConfig(config map[string]string) error {
+	return a.configManager.SaveSFTPConfig(config)
+}
+
+func (a *App) TestSFTPConnection(host string, port int, username, password, authMethod, privateKey string) error {
+	return a.configManager.TestSFTPConnection(host, port, username, password, authMethod, privateKey)
+}
+
+func (a *App) BackupToSFTP() (map[string]interface{}, error) {
+	return a.configManager.BackupToSFTP()
+}
+
+func (a *App) ListSFTPBackups() ([]map[string]interface{}, error) {
+	return a.configManager.ListSFTPBackups()
+}
+
+func (a *App) RestoreFromSFTPFile(filename string) (map[string]interface{}, error) {
+	return a.configManager.RestoreFromSFTPFile(filename)
+}
+
+func (a *App) SyncFromSFTP() (map[string]interface{}, error) {
+	return a.configManager.SyncFromSFTP()
 }
 
 // PingServer pings a server
