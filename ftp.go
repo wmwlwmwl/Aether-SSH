@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -160,101 +159,113 @@ func (c *ConfigManager) ensureFTPDir(client *ftp.ServerConn) error {
 	return client.ChangeDir(conf.RemoteDir)
 }
 
-func (c *ConfigManager) BackupToFTP() (map[string]interface{}, error) {
-	conf := c.GetFTPConfig()
-	if conf == nil {
-		return nil, fmt.Errorf("FTP not configured")
-	}
-	client, err := c.newFTPClient()
-	if err != nil {
-		return nil, err
-	}
-	defer client.Quit()
+// ─── FTP RemoteStorage 实现 ───────────────────────────────
 
-	err = c.ensureFTPDir(client)
-	if err != nil {
-		return nil, err
-	}
-
-	conns := c.GetConnections()
-	data, _ := json.MarshalIndent(conns, "", "  ")
-	key := c.getFTPKey()
-	encryptedData := c.encryptWithKey(string(data), key)
-
-	timestamp := time.Now().Format("20060102_150405")
-	fileName := fmt.Sprintf("connections_backup_%s.enc", timestamp)
-
-	err = client.Stor(fileName, bytes.NewReader([]byte(encryptedData)))
-	if err != nil {
-		return nil, err
-	}
-
-	// Prune old backups
-	if conf.MaxBackups > 0 {
-		entries, err := client.List(conf.RemoteDir)
-		if err == nil {
-			type backupEntry struct {
-				name string
-				time time.Time
-			}
-			var backupFiles []backupEntry
-			for _, e := range entries {
-				if e.Type == ftp.EntryTypeFile && strings.HasPrefix(e.Name, "connections_backup_") {
-					backupFiles = append(backupFiles, backupEntry{e.Name, e.Time})
-				}
-			}
-			if len(backupFiles) > conf.MaxBackups {
-				sort.Slice(backupFiles, func(i, j int) bool {
-					return backupFiles[i].time.Before(backupFiles[j].time)
-				})
-				for i := 0; i < len(backupFiles)-conf.MaxBackups; i++ {
-					client.Delete(conf.RemoteDir + backupFiles[i].name)
-				}
-			}
-		}
-	}
-
-	return map[string]interface{}{
-		"path":  strings.TrimRight(conf.RemoteDir, "/") + "/" + fileName,
-		"time":  time.Now().Format("2006-01-02 15:04:05"),
-		"count": len(conns),
-	}, nil
+type ftpStorage struct {
+	c         *ConfigManager
+	remoteDir string
+	key       []byte
 }
 
-func (c *ConfigManager) ListFTPBackups() ([]map[string]interface{}, error) {
-	conf := c.GetFTPConfig()
-	if conf == nil {
-		return nil, fmt.Errorf("FTP not configured")
-	}
-	client, err := c.newFTPClient()
+func (s *ftpStorage) ListFiles() ([]RemoteFile, error) {
+	client, err := s.c.newFTPClient()
 	if err != nil {
 		return nil, err
 	}
 	defer client.Quit()
 
-	entries, err := client.List(conf.RemoteDir)
+	entries, err := client.List(s.remoteDir)
 	if err != nil {
 		return nil, err
 	}
-
-	var backups []map[string]interface{}
-	for _, entry := range entries {
-		if entry.Type == ftp.EntryTypeFile {
-			backups = append(backups, map[string]interface{}{
-				"name": entry.Name,
-				"time": entry.Time.Format("2006-01-02 15:04:05"),
-				"size": int64(entry.Size),
-			})
-		}
+	var result []RemoteFile
+	for _, e := range entries {
+		result = append(result, RemoteFile{
+			Name:    e.Name,
+			ModTime: e.Time,
+			IsDir:   e.Type == ftp.EntryTypeFolder,
+			Size:    int64(e.Size),
+		})
 	}
+	return result, nil
+}
 
-	sort.Slice(backups, func(i, j int) bool {
-		t1, _ := time.Parse("2006-01-02 15:04:05", backups[i]["time"].(string))
-		t2, _ := time.Parse("2006-01-02 15:04:05", backups[j]["time"].(string))
-		return t1.After(t2)
-	})
+func (s *ftpStorage) ReadFile(name string) ([]byte, error) {
+	client, err := s.c.newFTPClient()
+	if err != nil {
+		return nil, err
+	}
+	defer client.Quit()
 
-	return backups, nil
+	path := strings.TrimRight(s.remoteDir, "/") + "/" + name
+	resp, err := client.Retr(path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(resp)
+	return buf.Bytes(), err
+}
+
+func (s *ftpStorage) WriteFile(name string, data []byte) error {
+	client, err := s.c.newFTPClient()
+	if err != nil {
+		return err
+	}
+	defer client.Quit()
+
+	// ensure dir
+	s.c.ensureFTPDir(client)
+
+	return client.Stor(name, bytes.NewReader(data))
+}
+
+func (s *ftpStorage) DeleteFile(name string) error {
+	client, err := s.c.newFTPClient()
+	if err != nil {
+		return err
+	}
+	defer client.Quit()
+	return client.Delete(name)
+}
+
+func (s *ftpStorage) EncryptKey() []byte { return s.key }
+
+func (c *ConfigManager) newFTPStorage() (RemoteStorage, int, error) {
+	conf := c.GetFTPConfig()
+	if conf == nil {
+		return nil, 0, fmt.Errorf("FTP not configured")
+	}
+	return &ftpStorage{c: c, remoteDir: conf.RemoteDir, key: c.getFTPKey()}, conf.MaxBackups, nil
+}
+
+// BackupToFTP 备份到 FTP
+func (c *ConfigManager) BackupToFTP() (map[string]interface{}, error) {
+	s, max, err := c.newFTPStorage()
+	if err != nil {
+		return nil, err
+	}
+	return c.backupConnections(s, max)
+}
+
+// ListFTPBackups 列出 FTP 备份
+func (c *ConfigManager) ListFTPBackups() ([]map[string]interface{}, error) {
+	s, _, err := c.newFTPStorage()
+	if err != nil {
+		return nil, err
+	}
+	return c.listBackupFiles(s)
+}
+
+// SyncFromFTP 手动合并同步
+func (c *ConfigManager) SyncFromFTP() (map[string]interface{}, error) {
+	s, _, err := c.newFTPStorage()
+	if err != nil {
+		return nil, err
+	}
+	return c.syncFromProvider(s)
 }
 
 func (c *ConfigManager) RestoreFromFTPFile(filename string) (map[string]interface{}, error) {
@@ -291,54 +302,4 @@ func (c *ConfigManager) RestoreFromFTPFile(filename string) (map[string]interfac
 	return map[string]interface{}{
 		"success": true,
 	}, nil
-}
-
-func (c *ConfigManager) SyncFromFTP() (map[string]interface{}, error) {
-	return c.syncFromProvider(
-		func() ([]Connection, error) {
-			conf := c.GetFTPConfig()
-			if conf == nil {
-				return nil, fmt.Errorf("FTP not configured")
-			}
-			client, err := c.newFTPClient()
-			if err != nil {
-				return nil, err
-			}
-			defer client.Quit()
-
-			entries, err := client.List(conf.RemoteDir)
-			if err != nil {
-				return nil, fmt.Errorf("读取远程目录失败：%v", err)
-			}
-
-			var latestFile string
-			var latestTime time.Time
-			for _, entry := range entries {
-				if entry.Type == ftp.EntryTypeFile && entry.Time.After(latestTime) {
-					latestTime = entry.Time
-					latestFile = entry.Name
-				}
-			}
-			if latestFile == "" {
-				return nil, fmt.Errorf("云端没有备份文件")
-			}
-
-			remotePath := strings.TrimRight(conf.RemoteDir, "/") + "/" + latestFile
-			resp, err := client.Retr(remotePath)
-			if err != nil {
-				return nil, err
-			}
-			defer resp.Close()
-
-			buf := new(bytes.Buffer)
-			_, err = buf.ReadFrom(resp)
-			if err != nil {
-				return nil, err
-			}
-
-			key := c.getFTPKey()
-			return c.decryptAndParse(buf.String(), key)
-		},
-		c.BackupToFTP,
-	)
 }

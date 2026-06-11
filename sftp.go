@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -190,111 +189,123 @@ func (c *ConfigManager) ensureSFTPDir(client *sftp.Client) error {
 	return nil
 }
 
-func (c *ConfigManager) BackupToSFTP() (map[string]interface{}, error) {
-	conf := c.GetSFTPConfig()
-	if conf == nil {
-		return nil, fmt.Errorf("SFTP not configured")
-	}
+// ─── SFTP RemoteStorage 实现 ──────────────────────────────
 
-	client, err := c.newSFTPClient()
+type sftpStorage struct {
+	c         *ConfigManager
+	remoteDir string
+	key       []byte
+}
+
+func (s *sftpStorage) ListFiles() ([]RemoteFile, error) {
+	client, err := s.c.newSFTPClient()
 	if err != nil {
 		return nil, err
 	}
 	defer client.Close()
 
-	err = c.ensureSFTPDir(client)
+	files, err := client.ReadDir(s.remoteDir)
 	if err != nil {
 		return nil, err
 	}
+	var result []RemoteFile
+	for _, f := range files {
+		result = append(result, RemoteFile{
+			Name:    f.Name(),
+			ModTime: f.ModTime(),
+			IsDir:   f.IsDir(),
+			Size:    f.Size(),
+		})
+	}
+	return result, nil
+}
 
-	conns := c.GetConnections()
-	data, _ := json.MarshalIndent(conns, "", "  ")
-	key := c.getSFTPKey()
-	encryptedData := c.encryptWithKey(string(data), key)
-
-	timestamp := time.Now().Format("20060102_150405")
-	fileName := fmt.Sprintf("connections_backup_%s.enc", timestamp)
-	remotePath := strings.TrimSuffix(conf.RemoteDir, "/") + "/" + fileName
-
-	f, err := client.Create(remotePath)
+func (s *sftpStorage) ReadFile(name string) ([]byte, error) {
+	client, err := s.c.newSFTPClient()
 	if err != nil {
-		return nil, fmt.Errorf("创建远程文件失败：%v", err)
+		return nil, err
+	}
+	defer client.Close()
+
+	path := strings.TrimSuffix(s.remoteDir, "/") + "/" + name
+	f, err := client.Open(path)
+	if err != nil {
+		return nil, err
 	}
 	defer f.Close()
 
-	_, err = f.Write([]byte(encryptedData))
-	if err != nil {
-		return nil, fmt.Errorf("写入远程文件失败：%v", err)
-	}
-	f.Close()
-
-	// Prune old backups
-	if conf.MaxBackups > 0 {
-		files, err := client.ReadDir(conf.RemoteDir)
-		if err == nil {
-			type backupEntry struct {
-				name string
-				time time.Time
-			}
-			var backupFiles []backupEntry
-			for _, fi := range files {
-				if !fi.IsDir() && strings.HasPrefix(fi.Name(), "connections_backup_") {
-					backupFiles = append(backupFiles, backupEntry{fi.Name(), fi.ModTime()})
-				}
-			}
-			if len(backupFiles) > conf.MaxBackups {
-				sort.Slice(backupFiles, func(i, j int) bool {
-					return backupFiles[i].time.Before(backupFiles[j].time)
-				})
-				for i := 0; i < len(backupFiles)-conf.MaxBackups; i++ {
-					client.Remove(strings.TrimSuffix(conf.RemoteDir, "/") + "/" + backupFiles[i].name)
-				}
-			}
-		}
-	}
-
-	return map[string]interface{}{
-		"path":  remotePath,
-		"time":  time.Now().Format("2006-01-02 15:04:05"),
-		"count": len(conns),
-	}, nil
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(f)
+	return buf.Bytes(), err
 }
 
-func (c *ConfigManager) ListSFTPBackups() ([]map[string]interface{}, error) {
-	conf := c.GetSFTPConfig()
-	if conf == nil {
-		return nil, fmt.Errorf("SFTP not configured")
-	}
-
-	client, err := c.newSFTPClient()
+func (s *sftpStorage) WriteFile(name string, data []byte) error {
+	client, err := s.c.newSFTPClient()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer client.Close()
 
-	files, err := client.ReadDir(conf.RemoteDir)
+	s.c.ensureSFTPDir(client)
+
+	path := strings.TrimSuffix(s.remoteDir, "/") + "/" + name
+	f, err := client.Create(path)
 	if err != nil {
-		return nil, fmt.Errorf("读取远程目录失败：%v", err)
+		return err
 	}
+	defer f.Close()
 
-	var backups []map[string]interface{}
-	for _, f := range files {
-		if !f.IsDir() {
-			backups = append(backups, map[string]interface{}{
-				"name": f.Name(),
-				"time": f.ModTime().Format("2006-01-02 15:04:05"),
-				"size": f.Size(),
-			})
-		}
+	_, err = f.Write(data)
+	if err != nil {
+		return err
 	}
+	return f.Close()
+}
 
-	sort.Slice(backups, func(i, j int) bool {
-		t1, _ := time.Parse("2006-01-02 15:04:05", backups[i]["time"].(string))
-		t2, _ := time.Parse("2006-01-02 15:04:05", backups[j]["time"].(string))
-		return t1.After(t2)
-	})
+func (s *sftpStorage) DeleteFile(name string) error {
+	client, err := s.c.newSFTPClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return client.Remove(name)
+}
 
-	return backups, nil
+func (s *sftpStorage) EncryptKey() []byte { return s.key }
+
+func (c *ConfigManager) newSFTPStorage() (RemoteStorage, int, error) {
+	conf := c.GetSFTPConfig()
+	if conf == nil {
+		return nil, 0, fmt.Errorf("SFTP not configured")
+	}
+	return &sftpStorage{c: c, remoteDir: conf.RemoteDir, key: c.getSFTPKey()}, conf.MaxBackups, nil
+}
+
+// BackupToSFTP 备份到 SFTP
+func (c *ConfigManager) BackupToSFTP() (map[string]interface{}, error) {
+	s, max, err := c.newSFTPStorage()
+	if err != nil {
+		return nil, err
+	}
+	return c.backupConnections(s, max)
+}
+
+// ListSFTPBackups 列出 SFTP 备份
+func (c *ConfigManager) ListSFTPBackups() ([]map[string]interface{}, error) {
+	s, _, err := c.newSFTPStorage()
+	if err != nil {
+		return nil, err
+	}
+	return c.listBackupFiles(s)
+}
+
+// SyncFromSFTP 手动合并同步
+func (c *ConfigManager) SyncFromSFTP() (map[string]interface{}, error) {
+	s, _, err := c.newSFTPStorage()
+	if err != nil {
+		return nil, err
+	}
+	return c.syncFromProvider(s)
 }
 
 func (c *ConfigManager) RestoreFromSFTPFile(filename string) (map[string]interface{}, error) {
@@ -332,55 +343,4 @@ func (c *ConfigManager) RestoreFromSFTPFile(filename string) (map[string]interfa
 	return map[string]interface{}{
 		"success": true,
 	}, nil
-}
-
-func (c *ConfigManager) SyncFromSFTP() (map[string]interface{}, error) {
-	return c.syncFromProvider(
-		func() ([]Connection, error) {
-			conf := c.GetSFTPConfig()
-			if conf == nil {
-				return nil, fmt.Errorf("SFTP not configured")
-			}
-
-			client, err := c.newSFTPClient()
-			if err != nil {
-				return nil, err
-			}
-			defer client.Close()
-
-			files, err := client.ReadDir(conf.RemoteDir)
-			if err != nil {
-				return nil, fmt.Errorf("读取远程目录失败：%v", err)
-			}
-
-			var latestFile string
-			var latestTime time.Time
-			for _, f := range files {
-				if !f.IsDir() && f.ModTime().After(latestTime) {
-					latestTime = f.ModTime()
-					latestFile = f.Name()
-				}
-			}
-			if latestFile == "" {
-				return nil, fmt.Errorf("云端没有备份文件")
-			}
-
-			remotePath := strings.TrimSuffix(conf.RemoteDir, "/") + "/" + latestFile
-			rf, err := client.Open(remotePath)
-			if err != nil {
-				return nil, err
-			}
-			defer rf.Close()
-
-			buf := new(bytes.Buffer)
-			_, err = buf.ReadFrom(rf)
-			if err != nil {
-				return nil, err
-			}
-
-			key := c.getSFTPKey()
-			return c.decryptAndParse(buf.String(), key)
-		},
-		c.BackupToSFTP,
-	)
 }
