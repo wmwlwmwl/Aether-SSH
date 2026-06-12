@@ -293,12 +293,12 @@ func (c *ConfigManager) RestoreFromFTPFile(filename string) (map[string]interfac
 	}
 
 	key := c.getFTPKey()
-	conns, err := c.decryptAndParse(buf.String(), key)
+	snap, err := c.decryptAndParseSnapshot(buf.String(), key)
 	if err != nil {
 		return nil, err
 	}
 
-	c.saveConnectionsFile(conns)
+	c.restoreSnapshotToLocal(snap)
 	return map[string]interface{}{
 		"success": true,
 	}, nil

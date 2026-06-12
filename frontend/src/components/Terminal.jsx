@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -123,6 +123,7 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
   const [showCommands, setShowCommands]       = useState(false);
   const [commandsPopupPos, setCommandsPopupPos] = useState(null);
   const commandsBtnRef                        = useRef(null);
+  const quickCmdsRef                          = useRef(null);
 
   // ── 初始化 xterm + WebSocket 终端通道 ────────────────────────────────
   // xterm.js 通过 AttachAddon + WebSocket 直接连到本地 Go WebSocket 服务器
@@ -647,10 +648,16 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
         });
       }
       if (showHistory) { setShowHistory(false); setHistoryPopupPos(null); }
+      setShowCommands(true);
     } else {
+      // 关闭面板时检查是否有未保存的修改
+      if (quickCmdsRef.current?.isDirty?.()) {
+        quickCmdsRef.current.showCloseConfirm();
+        return; // 由 onClose 回调来关闭
+      }
       setCommandsPopupPos(null);
+      setShowCommands(false);
     }
-    setShowCommands(willShow);
   };
 
   const selectHistoryCmd = (cmd) => {
@@ -1049,9 +1056,16 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
       {/* ── 快捷命令弹窗（fixed 定位，不受 overflow:hidden 裁剪） ── */}
       {showCommands && commandsPopupPos && (
         <>
-          {/* 透明遮罩层，点击关闭 */}
+          {/* 透明遮罩层，点击关闭（有未保存修改时弹出确认） */}
           <div
-            onClick={() => { setShowCommands(false); setCommandsPopupPos(null); }}
+            onClick={() => {
+              if (quickCmdsRef.current?.isDirty?.()) {
+                quickCmdsRef.current.showCloseConfirm();
+              } else {
+                setShowCommands(false);
+                setCommandsPopupPos(null);
+              }
+            }}
             style={{
               position: 'fixed', inset: 0, zIndex: 99,
               background: 'transparent',
@@ -1070,7 +1084,7 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
             zIndex: 100,
             overflow: 'hidden',
           }}>
-            <QuickCommands sessionId={sessionId} addToast={() => {}} connectedSessions={connectedSessions} />
+            <QuickCommands ref={quickCmdsRef} sessionId={sessionId} addToast={() => {}} connectedSessions={connectedSessions} onClose={() => { setShowCommands(false); setCommandsPopupPos(null); }} />
           </div>
         </>
       )}

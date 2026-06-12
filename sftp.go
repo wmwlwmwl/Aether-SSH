@@ -334,12 +334,12 @@ func (c *ConfigManager) RestoreFromSFTPFile(filename string) (map[string]interfa
 	}
 
 	key := c.getSFTPKey()
-	conns, err := c.decryptAndParse(buf.String(), key)
+	snap, err := c.decryptAndParseSnapshot(buf.String(), key)
 	if err != nil {
 		return nil, err
 	}
 
-	c.saveConnectionsFile(conns)
+	c.restoreSnapshotToLocal(snap)
 	return map[string]interface{}{
 		"success": true,
 	}, nil

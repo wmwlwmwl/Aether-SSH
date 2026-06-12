@@ -262,12 +262,12 @@ func (c *ConfigManager) RestoreFromR2File(objectKey string) (map[string]interfac
 	}
 
 	key := c.getR2Key()
-	conns, err := c.decryptAndParse(buf.String(), key)
+	snap, err := c.decryptAndParseSnapshot(buf.String(), key)
 	if err != nil {
 		return nil, err
 	}
 
-	c.saveConnectionsFile(conns)
+	c.restoreSnapshotToLocal(snap)
 	return map[string]interface{}{
 		"success": true,
 	}, nil

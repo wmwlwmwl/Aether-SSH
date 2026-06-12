@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import * as AppGo from '../../wailsjs/go/main/App.js';
 import { useTranslation } from '../i18n.js';
 
@@ -220,7 +220,7 @@ function TreeNode({ item, index, path, selectedPath, onSelect, onDelete, onAddCm
   );
 }
 
-export default function QuickCommands({ sessionId, addToast, connectedSessions = [] }) {
+const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, connectedSessions = [], onClose }, ref) {
   const { t } = useTranslation();
   const [commands, setCommands] = useState([]);
   const [selectedPath, setSelectedPath] = useState(null);
@@ -247,9 +247,27 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
   const [searchText, setSearchText] = useState('');
   const [rootDragOver, setRootDragOver] = useState(false);
   const [dragVersion, setDragVersion] = useState(0);
+  // 是否有未保存的编辑
+  const [dirty, setDirty] = useState(false);
+  // 切换确认：{ pendingPath } 或 null
+  const [confirmUnsaved, setConfirmUnsaved] = useState(null);
+  // 分组名称编辑（本地缓存，手动保存）
+  const [editGroupName, setEditGroupName] = useState('');
 
   const treeRef = useRef(null);
   const dragSourceRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // 暴露 dirty 状态给父组件（关闭确认）
+  useImperativeHandle(ref, () => ({
+    isDirty: () => dirty,
+    showCloseConfirm: () => setConfirmUnsaved({ close: true }),
+  }));
 
   // ── 拖拽 ─────────────────────────────────────────────
   const handleDragStart = (path) => {
@@ -308,6 +326,7 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
 
   // ── 初始化：从文件加载命令和参数历史 ───────────────
   useEffect(() => {
+    let cancelled = false;
     Promise.all([
       loadCommands(),
       (async () => {
@@ -319,9 +338,31 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
         return {};
       })(),
     ]).then(([data, hist]) => {
+      if (cancelled) return;
       if (data.length > 0) setCommands(data);
       setParamHistory(hist);
     });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 选中分组时同步本地编辑名称
+  useEffect(() => {
+    if (selectedItem?.type === 'group') {
+      setEditGroupName(selectedItem.name || '');
+    }
+  }, [selectedPath]);
+
+  // 组件卸载时自动保存未持久化的编辑
+  const commandsRef = useRef(commands);
+  const dirtyRef = useRef(dirty);
+  commandsRef.current = commands;
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    return () => {
+      if (dirtyRef.current && commandsRef.current.length > 0) {
+        saveCommands(commandsRef.current);
+      }
+    };
   }, []);
 
   // ── 点击外部关闭历史下拉 ───────────────────────────
@@ -337,10 +378,11 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
     return () => document.removeEventListener('mousedown', handler);
   }, [historyDropdown]);
 
-  // ── 持久化到文件 ──────────────────────────────────
-  const save = (list) => {
-    setCommands(list);
-    saveCommands(list);
+  // ── 持久化到文件（保存 + 重新加载，确保双向一致）──
+  const save = async (list) => {
+    await saveCommands(list);
+    const data = await loadCommands();
+    if (data.length > 0) setCommands(data);
   };
 
   // ── 上移/下移 ──────────────────────────────────────
@@ -372,16 +414,23 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
 
   // ── 选中处理 ────────────────────────────────────────
   const handleSelect = (path) => {
+    // 切换选中时如果有未保存修改，弹出确认框
+    if (selectedPath && selectedPath !== path && dirty) {
+      setConfirmUnsaved({ pendingPath: path });
+      return;
+    }
     setSelectedPath(path);
     setContextMenu(null);
     const { item } = resolvePath(commands, path);
-    // 点击分组：切换展开/折叠
+    // 点击分组：切换展开/折叠，并在右侧显示分组详情
     if (item?.type === 'group') {
       const list = JSON.parse(JSON.stringify(commands));
       const r = resolvePath(list, path);
       r.item.expanded = !r.item.expanded;
       save(list);
+      // 保留选中状态以便右侧显示分组详情
       setParamValues({});
+      setDirty(false);
       return;
     }
     // 点击命令：加载历史参数值
@@ -394,6 +443,94 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
     } else {
       setParamValues({});
     }
+    setDirty(false);
+  };
+
+  // ── 切换确认：保存 ──────────────────────────────────
+  const handleConfirmSave = () => {
+    if (!confirmUnsaved) return;
+    const isClose = confirmUnsaved.close;
+    const path = confirmUnsaved.pendingPath;
+    save(commands);
+    setDirty(false);
+    dirtyRef.current = false;
+    setConfirmUnsaved(null);
+    if (isClose) {
+      onClose?.();
+    } else if (path) {
+      // 判断目标是否为分组
+      const { item } = resolvePath(commands, path);
+      if (item?.type === 'group') {
+        // 分组：切换展开/折叠，并在右侧显示分组详情
+        const list = JSON.parse(JSON.stringify(commands));
+        const r = resolvePath(list, path);
+        r.item.expanded = !r.item.expanded;
+        save(list);
+        // 保留选中状态以便右侧显示分组详情
+        setParamValues({});
+        return;
+      }
+      // 继续跳转到目标
+      setSelectedPath(path);
+      setContextMenu(null);
+      if (item?.command) {
+        const params = extractParams(item.command);
+        const hist = paramHistory[item.command] || {};
+        const initial = {};
+        params.forEach(p => { initial[p.num] = (hist[p.num]?.[0]) || ''; });
+        setParamValues(initial);
+      } else {
+        setParamValues({});
+      }
+    }
+  };
+
+  // ── 切换确认：不保存 ────────────────────────────────
+  const handleConfirmDiscard = async () => {
+    if (!confirmUnsaved) return;
+    const isClose = confirmUnsaved.close;
+    const path = confirmUnsaved.pendingPath;
+    setConfirmUnsaved(null);
+    setDirty(false);
+    dirtyRef.current = false;
+    if (isClose) {
+      onClose?.();
+    } else if (path) {
+      // 判断目标是否为分组
+      const { item: currentItem } = resolvePath(commands, path);
+      const data = await loadCommands();
+      // 组件可能已卸载，避免 setState 内存泄漏
+      if (!mountedRef.current) return;
+      setCommands(data);
+      if (currentItem?.type === 'group') {
+        // 分组：切换展开/折叠，并在右侧显示分组详情
+        const list = JSON.parse(JSON.stringify(data));
+        const r = resolvePath(list, path);
+        if (r.item) r.item.expanded = !r.item.expanded;
+        save(list);
+        // 保留选中状态以便右侧显示分组详情
+        setParamValues({});
+        return;
+      }
+      // 继续跳转到目标
+      setSelectedPath(path);
+      setContextMenu(null);
+      const { item } = resolvePath(data, path);
+      if (item?.command) {
+        const params = extractParams(item.command);
+        const hist = paramHistory[item.command] || {};
+        const initial = {};
+        params.forEach(p => { initial[p.num] = (hist[p.num]?.[0]) || ''; });
+        setParamValues(initial);
+      } else {
+        setParamValues({});
+      }
+    }
+  };
+
+  // ── 切换确认：取消 ──────────────────────────────────
+  const handleConfirmCancel = () => {
+    setConfirmUnsaved(null);
   };
 
   const getSelectedItem = () => {
@@ -417,7 +554,7 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
 
   const closeContextMenu = () => setContextMenu(null);
 
-  const doContextAction = (action) => {
+  const doContextAction = async (action) => {
     if (!contextMenu) return;
     const { path, type, index } = contextMenu;
     const parts = path.split('/').map(Number);
@@ -467,11 +604,20 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
     }
 
     if (action === 'delete') {
-      const list = JSON.parse(JSON.stringify(commands));
-      const r = resolvePath(list, path);
-      r.parent.splice(r.idx, 1);
-      save(list);
-      setSelectedPath(null);
+      try {
+        const list = JSON.parse(JSON.stringify(commands));
+        const r = resolvePath(list, path);
+        r.parent.splice(r.idx, 1);
+        await AppGo.SaveQuickCommands(JSON.stringify(list));
+        setCommands(list);
+        setSelectedPath(null);
+        if (addToast) addToast('已删除', 'success', 1500);
+      } catch {
+        // 删除失败，重新从文件加载以确保状态一致
+        const data = await loadCommands();
+        if (data.length > 0) setCommands(data);
+        if (addToast) addToast('删除失败', 'error', 2000);
+      }
       return;
     }
 
@@ -707,9 +853,46 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
 
         {/* ── 右侧编辑器 ── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {/* 选中了命令 → 显示编辑器 */}
-          {selectedItem ? (
+          {/* 选中了分组 → 显示分组信息 */}
+          {selectedItem && selectedItem.type === 'group' ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px 14px', gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 11, color: '#8b949e', display: 'block', marginBottom: 4 }}>分组名称</label>
+                <input
+                  type="text"
+                  value={editGroupName}
+                  onChange={e => setEditGroupName(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                <button
+                  onClick={() => {
+                    const list = JSON.parse(JSON.stringify(commands));
+                    const r = resolvePath(list, selectedPath);
+                    r.parent[r.idx].name = editGroupName.trim() || selectedItem.name;
+                    save(list);
+                  }}
+                  style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e', borderRadius: 3, padding: '3px 10px', fontSize: 11, cursor: 'pointer' }}
+                >💾 保存名称</button>
+                <button
+                  onClick={() => {
+                    const list = JSON.parse(JSON.stringify(commands));
+                    const r = resolvePath(list, selectedPath);
+                    if (!r.item.children) r.item.children = [];
+                    setDialog({ type: 'add', targetChildren: r.item.children, parentList: list, groupName: r.item.name });
+                    setDlgName(''); setDlgCmd(''); setDlgAddCR(true);
+                  }}
+                  style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e', borderRadius: 3, padding: '3px 10px', fontSize: 11, cursor: 'pointer' }}
+                >＋ 添加命令</button>
+              </div>
+              <div style={{ fontSize: 12, color: '#6e7681', marginTop: 8 }}>
+                {selectedItem.children?.length || 0} 个命令/子分组
+              </div>
+            </div>
+          ) : selectedItem ? (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px 14px', gap: 10 }}>
+              {/* 选中了命令 → 显示编辑器 */}
               {/* 名称 */}
               <div>
                 <label style={{ fontSize: 11, color: '#8b949e', display: 'block', marginBottom: 4 }}>名称</label>
@@ -720,7 +903,8 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
                     const list = JSON.parse(JSON.stringify(commands));
                     const r = resolvePath(list, selectedPath);
                     r.parent[r.idx].name = e.target.value;
-                    save(list);
+                    setCommands(list);
+                    setDirty(true);
                   }}
                   style={inputStyle}
                 />
@@ -738,7 +922,8 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
                           const list = JSON.parse(JSON.stringify(commands));
                           const r = resolvePath(list, selectedPath);
                           r.parent[r.idx].command = (r.parent[r.idx].command || '') + `[p#${n} 参数${n}]`;
-                          save(list);
+                          setCommands(list);
+                          setDirty(true);
                         }}
                         title={`插入参数 p#${n}`}
                         style={{
@@ -755,13 +940,14 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
                     const list = JSON.parse(JSON.stringify(commands));
                     const r = resolvePath(list, selectedPath);
                     r.parent[r.idx].command = e.target.value;
-                    save(list);
+                    setCommands(list);
+                    setDirty(true);
                   }}
                   onKeyDown={(e) => {
                     if (e.ctrlKey && e.key === 's') {
                       e.preventDefault();
-                      const list = JSON.parse(JSON.stringify(commands));
-                      save(list);
+                      save(commands);
+                      setDirty(false);
                       if (addToast) addToast('已保存', 'success', 1500);
                     }
                   }}
@@ -796,6 +982,10 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
                   <span style={{ flex: 1, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#b1bac4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {selectedItem.command || ''}
                   </span>
+                  <button
+                    onClick={() => { save(commands); setDirty(false); if (addToast) addToast('已保存', 'success', 1500); }}
+                    style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', borderRadius: 3, padding: '2px 10px', fontSize: 11, cursor: 'pointer' }}
+                  >保存</button>
                   <button
                     onClick={() => {
                       const item = selectedItem;
@@ -987,39 +1177,6 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
                 </div>
               </div>
             </div>
-          ) : selectedItem && selectedItem.type === 'group' ? (
-            /* 选中了分组 → 显示分组信息 */
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px 14px', gap: 10 }}>
-              <div>
-                <label style={{ fontSize: 11, color: '#8b949e', display: 'block', marginBottom: 4 }}>分组名称</label>
-                <input
-                  type="text"
-                  value={selectedItem.name}
-                  onChange={(e) => {
-                    const list = JSON.parse(JSON.stringify(commands));
-                    const r = resolvePath(list, selectedPath);
-                    r.parent[r.idx].name = e.target.value;
-                    save(list);
-                  }}
-                  style={inputStyle}
-                />
-              </div>
-              <div style={{ fontSize: 12, color: '#6e7681', marginTop: 8 }}>
-                {selectedItem.children?.length || 0} 个命令/子分组
-              </div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                <button
-                  onClick={() => {
-                    const list = JSON.parse(JSON.stringify(commands));
-                    const r = resolvePath(list, selectedPath);
-                    if (!r.item.children) r.item.children = [];
-                    setDialog({ type: 'add', targetChildren: r.item.children, parentList: list, groupName: r.item.name });
-                    setDlgName(''); setDlgCmd(''); setDlgAddCR(true);
-                  }}
-                  style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e', borderRadius: 3, padding: '3px 10px', fontSize: 11, cursor: 'pointer' }}
-                >＋ 添加命令</button>
-              </div>
-            </div>
           ) : (
             /* 未选中任何项 */
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6e7681', fontSize: 13, flexDirection: 'column', gap: 8 }}>
@@ -1106,6 +1263,39 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
                 <div onClick={() => doContextAction('delete')} style={{ ...menuItemStyle, color: '#ff7b72' }}>🗑️ 删除</div>
               </>
             )}
+          </div>
+        </>
+      )}
+
+      {/* ── 未保存修改确认对话框 ── */}
+      {confirmUnsaved && (
+        <>
+          <div onClick={handleConfirmCancel} style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.4)' }} />
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 300,
+            width: 360, background: '#1c2128', border: '1px solid #30363d', borderRadius: 8,
+            boxShadow: '0 12px 40px rgba(0,0,0,0.6)', padding: '16px 20px',
+          }}>
+            <div style={{ fontSize: 14, color: '#cdd9e5', marginBottom: 14, fontWeight: 600 }}>
+              未保存的修改
+            </div>
+            <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 16 }}>
+              当前命令有未保存的修改，是否保存？
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={handleConfirmCancel}
+                style={{ background: 'transparent', border: '1px solid #30363d', color: '#8b949e', borderRadius: 4, padding: '5px 16px', fontSize: 12, cursor: 'pointer' }}
+              >取消</button>
+              <button
+                onClick={handleConfirmDiscard}
+                style={{ background: 'transparent', border: '1px solid #f85149', color: '#f85149', borderRadius: 4, padding: '5px 16px', fontSize: 12, cursor: 'pointer' }}
+              >不保存</button>
+              <button
+                onClick={handleConfirmSave}
+                style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', borderRadius: 4, padding: '5px 16px', fontSize: 12, cursor: 'pointer' }}
+              >保存</button>
+            </div>
           </div>
         </>
       )}
@@ -1223,7 +1413,9 @@ export default function QuickCommands({ sessionId, addToast, connectedSessions =
 
     </div>
   );
-}
+});
+
+export default QuickCommands;
 
 // ── 通用样式对象 ──────────────────────────────────
 const menuItemStyle = {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -27,9 +28,17 @@ type RemoteStorage interface {
 	EncryptKey() []byte
 }
 
+// ─── 同步快照 ─────────────────────────────────────────────
+
+// SyncSnapshot 同步快照，包含连接和快捷命令等所有可同步数据
+type SyncSnapshot struct {
+	Connections   []Connection `json:"connections"`
+	QuickCommands string       `json:"quick_commands,omitempty"`
+}
+
 // ─── 共享解密/解析 ─────────────────────────────────────────
 
-// decryptAndParse 尝试用 key 解密 data，失败则降级用主密钥解密，并解析为连接列表
+// decryptAndParse 尝试用 key 解密 data，失败则降级用主密钥解密，并解析为连接列表（旧格式兼容）
 func (c *ConfigManager) decryptAndParse(data string, key []byte) ([]Connection, error) {
 	decrypted := c.decryptWithKey(data, key)
 	if decrypted == "" {
@@ -38,12 +47,40 @@ func (c *ConfigManager) decryptAndParse(data string, key []byte) ([]Connection, 
 			return nil, fmt.Errorf("解密失败：如果这是旧版本产生的备份，且您之前卸载清理了本地缓存(aether.key)，则受 AES-256 高强加密保护，资料已永久无法恢复。")
 		}
 	}
+	// 先尝试新格式（快照）
+	var snap SyncSnapshot
+	if err := json.Unmarshal([]byte(decrypted), &snap); err == nil && len(snap.Connections) > 0 {
+		return snap.Connections, nil
+	}
+	// 回退旧格式（纯连接列表）
 	var conns []Connection
 	err := json.Unmarshal([]byte(decrypted), &conns)
 	if err != nil {
 		return nil, fmt.Errorf("解析备份文件出错：%v", err)
 	}
 	return conns, nil
+}
+
+// decryptAndParseSnapshot 解密并解析为完整快照（优先新格式，回退旧格式）
+func (c *ConfigManager) decryptAndParseSnapshot(data string, key []byte) (*SyncSnapshot, error) {
+	decrypted := c.decryptWithKey(data, key)
+	if decrypted == "" {
+		decrypted = c.decryptWithKey(data, c.key)
+		if decrypted == "" {
+			return nil, fmt.Errorf("解密失败：如果这是旧版本产生的备份，且您之前卸载清理了本地缓存(aether.key)，则受 AES-256 高强加密保护，资料已永久无法恢复。")
+		}
+	}
+	// 尝试新格式（快照）
+	var snap SyncSnapshot
+	if err := json.Unmarshal([]byte(decrypted), &snap); err == nil && len(snap.Connections) > 0 {
+		return &snap, nil
+	}
+	// 回退旧格式（纯连接列表）
+	var conns []Connection
+	if err := json.Unmarshal([]byte(decrypted), &conns); err != nil {
+		return nil, fmt.Errorf("解析备份文件出错：%v", err)
+	}
+	return &SyncSnapshot{Connections: conns}, nil
 }
 
 // ─── 共享合并/比较 ─────────────────────────────────────────
@@ -113,10 +150,21 @@ func sortedConnsJSON(conns []Connection) string {
 	return string(data)
 }
 
+// snapshotEqual 比较本地快照和远端快照是否一致
+func snapshotEqual(s1, s2 *SyncSnapshot) bool {
+	if !connsEqual(s1.Connections, s2.Connections) {
+		return false
+	}
+	if s1.QuickCommands != s2.QuickCommands {
+		return false
+	}
+	return true
+}
+
 // ─── 共享远端操作 ─────────────────────────────────────────
 
-// fetchLatestBackup 从远端下载最新备份并解密
-func (c *ConfigManager) fetchLatestBackup(s RemoteStorage) ([]Connection, error) {
+// fetchLatestBackup 从远端下载最新备份并解密为快照
+func (c *ConfigManager) fetchLatestBackup(s RemoteStorage) (*SyncSnapshot, error) {
 	files, err := s.ListFiles()
 	if err != nil {
 		return nil, fmt.Errorf("读取远程目录失败：%v", err)
@@ -138,13 +186,16 @@ func (c *ConfigManager) fetchLatestBackup(s RemoteStorage) ([]Connection, error)
 	if err != nil {
 		return nil, err
 	}
-	return c.decryptAndParse(string(data), s.EncryptKey())
+	return c.decryptAndParseSnapshot(string(data), s.EncryptKey())
 }
 
-// backupConnections 加密本地连接列表并上传到远端，同时清理超出 maxBackups 的旧备份
+// backupConnections 加密本地所有可同步数据并上传到远端，同时清理超出 maxBackups 的旧备份
 func (c *ConfigManager) backupConnections(s RemoteStorage, maxBackups int) (map[string]interface{}, error) {
-	conns := c.GetConnections()
-	data, _ := json.MarshalIndent(conns, "", "  ")
+	snap := SyncSnapshot{
+		Connections:   c.GetConnections(),
+		QuickCommands: c.loadRawFile(c.quickCmdFile),
+	}
+	data, _ := json.MarshalIndent(snap, "", "  ")
 	encrypted := c.encryptWithKey(string(data), s.EncryptKey())
 
 	timestamp := time.Now().Format("20060102_150405")
@@ -160,7 +211,7 @@ func (c *ConfigManager) backupConnections(s RemoteStorage, maxBackups int) (map[
 	return map[string]interface{}{
 		"path":  fileName,
 		"time":  time.Now().Format("2006-01-02 15:04:05"),
-		"count": len(conns),
+		"count": len(snap.Connections),
 	}, nil
 }
 
@@ -217,42 +268,53 @@ func (c *ConfigManager) listBackupFiles(s RemoteStorage) ([]map[string]interface
 
 // ─── 同步入口 ─────────────────────────────────────────────
 
-// syncFromProvider 手动合并同步：下载远端 → 合并本地 → 保存 → 条件上传
+// syncFromProvider 手动合并同步：下载远端 → 合并连接+命令 → 保存本地 → 条件上传
 func (c *ConfigManager) syncFromProvider(s RemoteStorage) (map[string]interface{}, error) {
-	remoteConns, err := c.fetchLatestBackup(s)
+	remoteSnap, err := c.fetchLatestBackup(s)
 	if err != nil {
 		return nil, err
 	}
 
+	// 合并连接（双向：按 ID 去重合并）
 	localConns := c.GetConnections()
-	deduped := c.mergeAndDedupe(localConns, remoteConns)
+	deduped := c.mergeAndDedupe(localConns, remoteSnap.Connections)
 	c.saveConnectionsFile(deduped)
 
+	// 合并快捷命令（双向：按 name 去重合并）
+	localQuickCmds := c.loadRawFile(c.quickCmdFile)
+	mergedQuickCmds := c.mergeQuickCommands(localQuickCmds, remoteSnap.QuickCommands)
+	os.WriteFile(c.quickCmdFile, []byte(mergedQuickCmds), 0600)
+
 	var backupResult interface{}
-	if !connsEqual(deduped, remoteConns) {
-		backupResult, _ = c.backupConnections(s, 0) // 不重复 prune
+	changed := !connsEqual(deduped, remoteSnap.Connections) ||
+		mergedQuickCmds != remoteSnap.QuickCommands
+	if changed {
+		backupResult, _ = c.backupConnections(s, 0)
 	}
 
 	return map[string]interface{}{
 		"success":     true,
 		"localCount":  len(localConns),
-		"remoteCount": len(remoteConns),
+		"remoteCount": len(remoteSnap.Connections),
 		"mergedCount": len(deduped),
 		"backup":      backupResult,
 	}, nil
 }
 
-// autoSyncProvider 自动同步：以本地为准，本地删除的从云端移除，无变化则跳过
+// autoSyncProvider 自动同步：以本地为准推送变更到云端，无变化则跳过
 func (c *ConfigManager) autoSyncProvider(s RemoteStorage, maxBackups int) {
-	localConns := c.GetConnections()
+	localSnap := &SyncSnapshot{
+		Connections:   c.GetConnections(),
+		QuickCommands: c.loadRawFile(c.quickCmdFile),
+	}
 
-	remoteConns, err := c.fetchLatestBackup(s)
+	remoteSnap, err := c.fetchLatestBackup(s)
 	if err != nil {
 		c.backupConnections(s, maxBackups) // 云端无备份，直接上传
 		return
 	}
 
-	if !connsEqual(localConns, remoteConns) {
+	if !snapshotEqual(localSnap, remoteSnap) {
 		c.backupConnections(s, maxBackups)
 	}
 }
@@ -308,4 +370,127 @@ func (c *ConfigManager) AutoSync() {
 // AutoSyncToWebdav 保留向后兼容
 func (c *ConfigManager) AutoSyncToWebdav() {
 	c.AutoSync()
+}
+
+// cmdKey 生成去重键：名称+命令（命令相同的项视为重复）
+func cmdKey(m map[string]interface{}) string {
+	name, _ := m["name"].(string)
+	cmd, _ := m["command"].(string)
+	return name + "|||" + cmd
+}
+
+// mergeQuickCommands 合并本地和远端的快捷命令列表（按 名称+命令 去重合并，组内 children 同样）
+func (c *ConfigManager) mergeQuickCommands(localStr, remoteStr string) string {
+	if remoteStr == "" || remoteStr == "[]" {
+		return localStr
+	}
+	if localStr == "" || localStr == "[]" {
+		return remoteStr
+	}
+
+	var local, remote []interface{}
+	if err := json.Unmarshal([]byte(localStr), &local); err != nil {
+		return localStr
+	}
+	if err := json.Unmarshal([]byte(remoteStr), &remote); err != nil {
+		return localStr
+	}
+
+	// build key-indexed map from local
+	localMap := make(map[string]interface{})
+	var localOrder []string
+	for _, item := range local {
+		if m, ok := item.(map[string]interface{}); ok {
+			key := cmdKey(m)
+			localMap[key] = m
+			localOrder = append(localOrder, key)
+		}
+	}
+
+	// merge remote into local
+	for _, item := range remote {
+		if m, ok := item.(map[string]interface{}); ok {
+			key := cmdKey(m)
+			if existing, ok := localMap[key]; ok {
+				// group with children on both sides → merge children
+				if ex, eok := existing.(map[string]interface{}); eok {
+					if exCh, exOk := ex["children"]; exOk {
+						if rmCh, rmOk := m["children"]; rmOk {
+							mergedCh := c.mergeCmdChildren(exCh, rmCh)
+							m["children"] = mergedCh
+						}
+					}
+				}
+			}
+			localMap[key] = m
+		}
+	}
+
+	// build result preserving local order, then append new remote items
+	result := make([]interface{}, 0)
+	added := make(map[string]bool)
+	for _, key := range localOrder {
+		if _, ok := localMap[key]; ok {
+			result = append(result, localMap[key])
+			added[key] = true
+		}
+	}
+	for _, item := range remote {
+		if m, ok := item.(map[string]interface{}); ok {
+			key := cmdKey(m)
+			if !added[key] {
+				result = append(result, m)
+			}
+		}
+	}
+
+	data, _ := json.MarshalIndent(result, "", "  ")
+	return string(data)
+}
+
+// mergeCmdChildren 合并两个 children 数组（按 名称+命令 去重，remote 覆盖同名的 local）
+func (c *ConfigManager) mergeCmdChildren(localCh, remoteCh interface{}) interface{} {
+	lArr, lok := localCh.([]interface{})
+	rArr, rok := remoteCh.([]interface{})
+	if !lok || !rok {
+		return remoteCh
+	}
+
+	childMap := make(map[string]interface{})
+	var order []string
+	for _, c := range lArr {
+		if m, ok := c.(map[string]interface{}); ok {
+			key := cmdKey(m)
+			childMap[key] = m
+			order = append(order, key)
+		}
+	}
+	for _, c := range rArr {
+		if m, ok := c.(map[string]interface{}); ok {
+			key := cmdKey(m)
+			if _, exists := childMap[key]; !exists {
+				order = append(order, key)
+			}
+			childMap[key] = m
+		}
+	}
+
+	result := make([]interface{}, 0, len(childMap))
+	for _, n := range order {
+		if v, ok := childMap[n]; ok {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// restoreSnapshotToLocal 将快照中的所有数据恢复到本地文件
+func (c *ConfigManager) restoreSnapshotToLocal(snap *SyncSnapshot) {
+	if snap == nil {
+		return
+	}
+	c.saveConnectionsFile(snap.Connections)
+	if snap.QuickCommands != "" {
+		os.WriteFile(c.quickCmdFile, []byte(snap.QuickCommands), 0600)
+	}
 }
