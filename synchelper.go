@@ -279,6 +279,7 @@ func (c *ConfigManager) syncFromProvider(s RemoteStorage) (map[string]interface{
 	localConns := c.GetConnections()
 	deduped := c.mergeAndDedupe(localConns, remoteSnap.Connections)
 	c.saveConnectionsFile(deduped)
+	c.CleanupOrphanedHistory() // 清理已不存在的连接的历史文件
 
 	// 合并快捷命令（双向：按 name 去重合并）
 	localQuickCmds := c.loadRawFile(c.quickCmdFile)

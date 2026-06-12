@@ -108,7 +108,8 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	// 启动时后台同步
+	// 启动时清理孤儿历史文件 + 后台同步
+	a.configManager.CleanupOrphanedHistory()
 	go a.configManager.AutoSync()
 }
 
@@ -473,6 +474,26 @@ func (a *App) GetParamHistory() string {
 // SaveParamHistory 保存参数历史
 func (a *App) SaveParamHistory(jsonStr string) error {
 	return a.configManager.SaveParamHistory(jsonStr)
+}
+
+// GetCommandHistory 获取指定会话的命令历史
+func (a *App) GetCommandHistory(sessionId string) string {
+	return a.configManager.GetCommandHistory(sessionId)
+}
+
+// SaveCommandHistory 保存指定会话的命令历史
+func (a *App) SaveCommandHistory(sessionId, jsonStr string) error {
+	return a.configManager.SaveCommandHistory(sessionId, jsonStr)
+}
+
+// GetGlobalCommandHistory 获取全局命令历史
+func (a *App) GetGlobalCommandHistory() string {
+	return a.configManager.GetGlobalCommandHistory()
+}
+
+// SaveGlobalCommandHistory 保存全局命令历史
+func (a *App) SaveGlobalCommandHistory(jsonStr string) error {
+	return a.configManager.SaveGlobalCommandHistory(jsonStr)
 }
 
 // PingServer pings a server

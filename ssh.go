@@ -46,6 +46,7 @@ type SessionData struct {
 	Stdin               io.WriteCloser
 	HistoryStream       *commandHistoryStream
 	RemoteHistoryActive bool
+	GroupSessionId      string // 对子终端有效：父会话 sessionId（用于历史事件归组）
 }
 
 type SSHManager struct {
@@ -372,6 +373,14 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 func (m *SSHManager) pipeOutput(sessionId string, r io.Reader, historyStream *commandHistoryStream) {
 	buf := make([]byte, 32768)
 
+	// 查找 GroupSessionId（子终端时使用父会话 ID 归组历史事件）
+	eventSessionId := sessionId
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionId]; ok && s.GroupSessionId != "" {
+		eventSessionId = s.GroupSessionId
+	}
+	m.mu.Unlock()
+
 	// 直接读取并通过 WebSocket 发送，不再批处理缓冲
 	// WebSocket 过 TCP loopback 延迟极低，无需批处理
 	for {
@@ -387,7 +396,7 @@ func (m *SSHManager) pipeOutput(sessionId string, r io.Reader, historyStream *co
 						continue
 					}
 					runtime.EventsEmit(m.ctx, "ssh-command-executed", map[string]string{
-						"sessionId": sessionId,
+						"sessionId": eventSessionId,
 						"command":   command,
 						"time":      time.Now().Format(time.RFC3339),
 						"source":    "remote",
@@ -591,6 +600,7 @@ func (m *SSHManager) OpenTerminal(sessionId string) (string, error) {
 		Stdin:               stdin,
 		HistoryStream:       historyStream,
 		RemoteHistoryActive: remoteHistoryActive,
+		GroupSessionId:      sessionId, // 使用父会话 ID 用于历史事件归组
 	}
 	m.connTerminals[connKey] = append(m.connTerminals[connKey], newId)
 	m.mu.Unlock()

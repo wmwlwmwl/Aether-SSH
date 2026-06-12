@@ -24,9 +24,17 @@ export function DisconnectSSH(arg1:string):Promise<void>;
 
 export function DownloadFile(arg1:string,arg2:string):Promise<void>;
 
+export function GetCommandHistory(arg1:string):Promise<string>;
+
 export function GetConnections():Promise<Array<main.Connection>>;
 
 export function GetFTPConfig():Promise<Record<string, any>>;
+
+export function GetGlobalCommandHistory():Promise<string>;
+
+export function GetParamHistory():Promise<string>;
+
+export function GetQuickCommands():Promise<string>;
 
 export function GetR2Config():Promise<Record<string, any>>;
 
@@ -76,9 +84,17 @@ export function RestoreFromSFTPFile(arg1:string):Promise<Record<string, any>>;
 
 export function RestoreFromWebdavFile(arg1:string):Promise<Record<string, any>>;
 
+export function SaveCommandHistory(arg1:string,arg2:string):Promise<void>;
+
 export function SaveConnection(arg1:main.Connection):Promise<main.Connection>;
 
 export function SaveFTPConfig(arg1:Record<string, string>):Promise<void>;
+
+export function SaveGlobalCommandHistory(arg1:string):Promise<void>;
+
+export function SaveParamHistory(arg1:string):Promise<void>;
+
+export function SaveQuickCommands(arg1:string):Promise<void>;
 
 export function SaveR2Config(arg1:Record<string, string>):Promise<void>;
 

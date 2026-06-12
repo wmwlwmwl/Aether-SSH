@@ -104,7 +104,7 @@ function readDisplayedCommand(term) {
   return candidate.trim();
 }
 
-export default function Terminal({ sessionId, serverId, status, isActive, serverName, connectedSessions = [] }) {
+export default function Terminal({ sessionId, serverId, historyServerId, status, isActive, serverName, connectedSessions = [] }) {
   const containerRef   = useRef(null);
   const termRef        = useRef(null);
   const fitAddonRef    = useRef(null);
@@ -117,8 +117,11 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
   const [cmdInput, setCmdInput]               = useState('');
   const [showHistory, setShowHistory]         = useState(false);
   const [historyList, setHistoryList]         = useState([]);
+  const [historyMode, setHistoryMode]         = useState('server'); // 'server' | 'global'
+  const [searchQuery, setSearchQuery]         = useState('');
   const cmdInputRef                           = useRef(null);
   const historyBtnRef                         = useRef(null);
+  const historyScrollRef                      = useRef(null);
   const [historyPopupPos, setHistoryPopupPos] = useState(null);
   const [showCommands, setShowCommands]       = useState(false);
   const [commandsPopupPos, setCommandsPopupPos] = useState(null);
@@ -602,12 +605,16 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
   }, [isConnected]);
 
   // ── 底部命令输入栏逻辑 ──────────────────────────────────────
-  const loadHistory = () => {
+
+  // 将命令追加到全局历史
+  const appendToGlobal = async (command, time) => {
     try {
-      const saved = localStorage.getItem(`cmd_history_${serverId}`);
-      const entries = saved ? JSON.parse(saved) : [];
-      setHistoryList(entries);
-    } catch { setHistoryList([]); }
+      const raw = await AppGo.GetGlobalCommandHistory();
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) return;
+      list.unshift({ id: Date.now() + Math.random(), command, time, source: 'input' });
+      await AppGo.SaveGlobalCommandHistory(JSON.stringify(list.slice(0, 100)));
+    } catch { /* ignore */ }
   };
 
   // 监听清除事件（CommandHistory 标签页清空时同步）
@@ -619,10 +626,55 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
     return () => window.removeEventListener('ssh-history-cleared', handler);
   }, [serverId]);
 
+  // 实时更新历史弹窗：监听 ssh-command-history 事件
+  useEffect(() => {
+    const handler = (e) => {
+      const { sessionId: evSessionId, command, time } = e.detail || {};
+      if (evSessionId !== serverId || !command) return;
+      setHistoryList(prev => {
+        const exists = prev.some(item => item.command === command && item.time === time);
+        if (exists) return prev;
+        return [{ id: Date.now() + Math.random(), command, time, source: 'input' }, ...prev].slice(0, 100);
+      });
+      // 同时追加到全局历史
+      appendToGlobal(command, time);
+    };
+    window.addEventListener('ssh-command-history', handler);
+    return () => window.removeEventListener('ssh-command-history', handler);
+  }, [serverId]);
+
+  // 弹窗打开或切换模式时加载历史数据
+  useEffect(() => {
+    if (!showHistory) return;
+    (async () => {
+      try {
+        const raw = historyMode === 'global'
+          ? await AppGo.GetGlobalCommandHistory()
+          : await AppGo.GetCommandHistory(historyServerId);
+        const entries = JSON.parse(raw);
+        setHistoryList(Array.isArray(entries) ? entries : []);
+      } catch { setHistoryList([]); }
+    })();
+  }, [showHistory, historyMode]);
+
+  // 历史列表更新时自动滚到底部
+  useEffect(() => {
+    if (!showHistory) return;
+    const el = historyScrollRef.current;
+    if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  }, [historyList, showHistory]);
+
+  const filteredHistory = searchQuery
+    ? historyList.filter(item => item.command.toLowerCase().includes(searchQuery.toLowerCase()))
+    : historyList;
+
+  // 反转后用于显示：最早的在上边，最新的在底部
+  const displayHistory = [...filteredHistory].reverse();
+
   const toggleHistory = () => {
     const willShow = !showHistory;
     if (willShow) {
-      loadHistory();
+      // 数据加载由 useEffect(showHistory) 负责
       const rect = historyBtnRef.current?.getBoundingClientRect();
       if (rect) {
         setHistoryPopupPos({
@@ -687,7 +739,7 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
   const deleteHistoryItem = (id) => {
     setHistoryList(prev => {
       const next = prev.filter(item => item.id !== id);
-      try { localStorage.setItem(`cmd_history_${serverId}`, JSON.stringify(next)); } catch {}
+      AppGo.SaveCommandHistory(historyServerId, JSON.stringify(next)).catch(() => {});
       return next;
     });
   };
@@ -952,7 +1004,7 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
             bottom: historyPopupPos.bottom,
             width: 480,
             maxHeight: 280,
-            overflowY: 'auto',
+            display: 'flex', flexDirection: 'column',
             background: '#161b22',
             border: '1px solid rgba(48,54,61,0.9)',
             borderRadius: 8,
@@ -961,21 +1013,19 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
             fontFamily: "'JetBrains Mono', monospace",
             fontSize: 12,
           }}>
-            {/* 弹窗头部 */}
+            {/* 弹窗头部（标题 + 操作按钮） */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '8px 10px',
               borderBottom: '1px solid rgba(255,255,255,0.06)',
-              color: '#8b949e',
-              fontSize: 11,
               flexShrink: 0,
             }}>
-              <span>历史命令</span>
+              <span style={{ color: '#8b949e', fontSize: 11 }}>历史命令</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <button
                   onClick={() => {
                     setHistoryList([]);
-                    try { localStorage.removeItem(`cmd_history_${serverId}`); } catch {}
+                    AppGo.SaveCommandHistory(historyServerId, '[]').catch(() => {});
                     window.dispatchEvent(new CustomEvent('ssh-history-cleared', { detail: { sessionId: serverId } }));
                   }}
                   style={{ ...btnStyle('red'), fontSize: 11, padding: '2px 8px' }}
@@ -991,10 +1041,13 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
               </div>
             </div>
 
-            {/* 历史列表 */}
-            {historyList.length === 0 ? (
-              <div style={{ padding: 20, textAlign: 'center', color: '#6e7681', fontSize: 12 }}>暂无历史记录</div>
-            ) : historyList.map(item => (
+            {/* 历史列表（可滚动） */}
+            <div ref={historyScrollRef} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            {filteredHistory.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: '#6e7681', fontSize: 12 }}>
+                {searchQuery ? '无匹配结果' : '暂无历史记录'}
+              </div>
+            ) : displayHistory.map(item => (
               <div
                 key={item.id}
                 style={{
@@ -1049,6 +1102,59 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
                 </div>
               </div>
             ))}
+            </div>
+
+            {/* 搜索 + 模式切换 */}
+            <div style={{
+              display: 'flex', gap: 6, alignItems: 'center',
+              padding: '6px 10px',
+              borderTop: '1px solid rgba(255,255,255,0.06)',
+              flexShrink: 0,
+            }}>
+              <input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="搜索命令..."
+                style={{
+                  flex: 1,
+                  padding: '4px 8px',
+                  background: '#0d1117',
+                  border: '1px solid rgba(48,54,61,0.8)',
+                  borderRadius: 4,
+                  color: '#cdd9e5',
+                  fontSize: 12,
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => setHistoryMode('server')}
+                style={{
+                  border: '1px solid ' + (historyMode === 'global' ? 'rgba(48,54,61,0.8)' : 'rgba(88,166,255,0.3)'),
+                  borderRadius: 4,
+                  padding: '3px 8px',
+                  background: historyMode === 'server' ? 'rgba(88,166,255,0.15)' : 'transparent',
+                  color: historyMode === 'server' ? '#58a6ff' : '#6e7681',
+                  cursor: 'pointer', fontSize: 10,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                当前服务器
+              </button>
+              <button
+                onClick={() => setHistoryMode('global')}
+                style={{
+                  border: '1px solid ' + (historyMode === 'server' ? 'rgba(48,54,61,0.8)' : 'rgba(88,166,255,0.3)'),
+                  borderRadius: 4,
+                  padding: '3px 8px',
+                  background: historyMode === 'global' ? 'rgba(88,166,255,0.15)' : 'transparent',
+                  color: historyMode === 'global' ? '#58a6ff' : '#6e7681',
+                  cursor: 'pointer', fontSize: 10,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                全部服务器
+              </button>
+            </div>
           </div>
         </>
       )}

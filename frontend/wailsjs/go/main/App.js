@@ -46,12 +46,20 @@ export function DownloadFile(arg1, arg2) {
   return window['go']['main']['App']['DownloadFile'](arg1, arg2);
 }
 
+export function GetCommandHistory(arg1) {
+  return window['go']['main']['App']['GetCommandHistory'](arg1);
+}
+
 export function GetConnections() {
   return window['go']['main']['App']['GetConnections']();
 }
 
 export function GetFTPConfig() {
   return window['go']['main']['App']['GetFTPConfig']();
+}
+
+export function GetGlobalCommandHistory() {
+  return window['go']['main']['App']['GetGlobalCommandHistory']();
 }
 
 export function GetParamHistory() {
@@ -158,12 +166,20 @@ export function RestoreFromWebdavFile(arg1) {
   return window['go']['main']['App']['RestoreFromWebdavFile'](arg1);
 }
 
+export function SaveCommandHistory(arg1, arg2) {
+  return window['go']['main']['App']['SaveCommandHistory'](arg1, arg2);
+}
+
 export function SaveConnection(arg1) {
   return window['go']['main']['App']['SaveConnection'](arg1);
 }
 
 export function SaveFTPConfig(arg1) {
   return window['go']['main']['App']['SaveFTPConfig'](arg1);
+}
+
+export function SaveGlobalCommandHistory(arg1) {
+  return window['go']['main']['App']['SaveGlobalCommandHistory'](arg1);
 }
 
 export function SaveParamHistory(arg1) {

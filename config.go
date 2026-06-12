@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/studio-b12/gowebdav"
@@ -30,13 +31,15 @@ type Connection struct {
 }
 
 type ConfigManager struct {
-	configDir     string
-	connFile      string
-	davFile       string
-	key           []byte
-	syncModeFile  string
-	quickCmdFile  string
-	paramHistFile string
+	configDir      string
+	connFile       string
+	davFile        string
+	key            []byte
+	syncModeFile   string
+	quickCmdFile   string
+	paramHistFile  string
+	historyDir     string
+	globalHistFile string
 }
 
 func NewConfigManager() *ConfigManager {
@@ -53,6 +56,8 @@ func NewConfigManager() *ConfigManager {
 	davFile := filepath.Join(dir, "webdav.json")
 	quickCmdFile := filepath.Join(dir, "quick_commands.json")
 	paramHistFile := filepath.Join(dir, "param_history.json")
+	historyDir := filepath.Join(dir, "history")
+	os.MkdirAll(historyDir, 0755)
 
 	// 检查是否存在本地独立密钥文件
 	if _, err := os.Stat(keyFile); err == nil {
@@ -73,13 +78,15 @@ func NewConfigManager() *ConfigManager {
 	}
 
 	return &ConfigManager{
-		configDir:     dir,
-		connFile:      connFile,
-		davFile:       davFile,
-		key:           key,
-		syncModeFile:  filepath.Join(dir, "sync_mode.json"),
-		quickCmdFile:  quickCmdFile,
-		paramHistFile: paramHistFile,
+		configDir:      dir,
+		connFile:       connFile,
+		davFile:        davFile,
+		key:            key,
+		syncModeFile:   filepath.Join(dir, "sync_mode.json"),
+		quickCmdFile:   quickCmdFile,
+		paramHistFile:  paramHistFile,
+		historyDir:     historyDir,
+		globalHistFile: filepath.Join(historyDir, "global.json"),
 	}
 }
 
@@ -218,6 +225,11 @@ func (c *ConfigManager) DeleteConnection(id string) bool {
 		}
 	}
 	c.saveConnectionsFile(filtered)
+
+	// 清理该服务器的历史文件
+	histPath := filepath.Join(c.historyDir, id+".json")
+	os.Remove(histPath)
+
 	go c.AutoSyncToWebdav()
 	return true
 }
@@ -476,4 +488,64 @@ func (c *ConfigManager) GetParamHistory() string {
 // SaveParamHistory 保存参数历史
 func (c *ConfigManager) SaveParamHistory(jsonStr string) error {
 	return os.WriteFile(c.paramHistFile, []byte(jsonStr), 0600)
+}
+
+// ─── 命令历史 ──────────────────────────────────────
+
+// GetCommandHistory 读取指定会话的命令历史
+func (c *ConfigManager) GetCommandHistory(sessionId string) string {
+	path := filepath.Join(c.historyDir, sessionId+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+// SaveCommandHistory 保存指定会话的命令历史
+func (c *ConfigManager) SaveCommandHistory(sessionId, jsonStr string) error {
+	path := filepath.Join(c.historyDir, sessionId+".json")
+	return os.WriteFile(path, []byte(jsonStr), 0600)
+}
+
+// GetGlobalCommandHistory 读取全局命令历史
+func (c *ConfigManager) GetGlobalCommandHistory() string {
+	data, err := os.ReadFile(c.globalHistFile)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+// SaveGlobalCommandHistory 保存全局命令历史
+func (c *ConfigManager) SaveGlobalCommandHistory(jsonStr string) error {
+	return os.WriteFile(c.globalHistFile, []byte(jsonStr), 0600)
+}
+
+// CleanupOrphanedHistory 清理已不存在的连接的历史文件
+func (c *ConfigManager) CleanupOrphanedHistory() {
+	conns := c.GetConnections()
+	active := make(map[string]bool)
+	for _, conn := range conns {
+		active[conn.ID] = true
+	}
+
+	entries, err := os.ReadDir(c.historyDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		// 跳过 global.json
+		if e.Name() == "global.json" {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if !active[id] {
+			path := filepath.Join(c.historyDir, e.Name())
+			os.Remove(path)
+		}
+	}
 }

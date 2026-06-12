@@ -75,6 +75,18 @@ export default function App() {
     probePanelWidthRef.current = next;
   };
 
+  // ── 清理旧 localStorage 残留数据 ──────────────────────
+  useEffect(() => {
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('cmd_history_') || key === 'command_history')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+  }, []);
+
   const startDrag = (e, direction) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -1401,6 +1413,7 @@ export default function App() {
                             <Terminal
                               sessionId={t.id}
                               serverId={s.id}
+                              historyServerId={s.serverId}
                               status={s.status}
                               isActive={activeSessionId === s.id && activeTerminalId === t.id && (contentTab === 'terminal' || fileManagerPosition !== 'tab')}
                               serverName={s.serverName}
@@ -1422,6 +1435,7 @@ export default function App() {
                         <div style={{ display: contentTab === 'history' ? 'block' : 'none', height: '100%', flex: 1 }}>
                           <CommandHistory
                             sessionId={s.id}
+                            historyServerId={s.serverId}
                             addToast={addToast}
                           />
                         </div>
