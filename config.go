@@ -200,6 +200,15 @@ func (c *ConfigManager) saveConnectionsFile(conns []Connection) {
 	os.WriteFile(c.connFile, data, 0600)
 }
 
+// loadRawFile 读取配置文件的原始 JSON 字符串（用于同步快照）
+func (c *ConfigManager) loadRawFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 func (c *ConfigManager) DeleteConnection(id string) bool {
 	conns := c.GetConnections()
 	filtered := []Connection{}
@@ -383,12 +392,12 @@ func (c *ConfigManager) RestoreFromWebdavFile(filename string) (map[string]inter
 	}
 
 	key := c.getWebdavKey()
-	conns, err := c.decryptAndParse(string(data), key)
+	snap, err := c.decryptAndParseSnapshot(string(data), key)
 	if err != nil {
 		return nil, err
 	}
 
-	c.saveConnectionsFile(conns)
+	c.restoreSnapshotToLocal(snap)
 	return map[string]interface{}{
 		"success": true,
 	}, nil
@@ -448,7 +457,11 @@ func (c *ConfigManager) GetQuickCommands() string {
 
 // SaveQuickCommands 保存快捷命令列表（JSON 字符串）
 func (c *ConfigManager) SaveQuickCommands(jsonStr string) error {
-	return os.WriteFile(c.quickCmdFile, []byte(jsonStr), 0600)
+	err := os.WriteFile(c.quickCmdFile, []byte(jsonStr), 0600)
+	if err == nil {
+		go c.AutoSyncToWebdav()
+	}
+	return err
 }
 
 // GetParamHistory 读取参数历史
