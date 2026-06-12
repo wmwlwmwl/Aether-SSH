@@ -1356,17 +1356,19 @@ export default function App() {
             {/* Session Content */}
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
               {/* 左侧/上侧主体容器 */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: fileManagerPosition === 'bottom' ? 'column' : 'row', height: '100%', position: 'relative', overflow: 'hidden' }}>
-                {sessions.map((s) => (
-                  <div
-                    key={s.id}
-                    style={{
-                      position: 'absolute',
-                      inset: 0,
-                      display: activeSessionId === s.id ? 'flex' : 'none',
-                      flexDirection: fileManagerPosition === 'bottom' ? 'column' : 'row',
-                    }}
-                  >
+              <div id="session-editor-container" style={{ flex: 1, display: 'flex', flexDirection: fileManagerPosition === 'bottom' ? 'column' : 'row', height: '100%', position: 'relative', overflow: 'hidden' }}>
+                {/* 主体视口 */}
+                <div style={{ flex: 1, position: 'relative', overflow: 'hidden', order: 1 }}>
+                  {sessions.map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: activeSessionId === s.id ? 'flex' : 'none',
+                        flexDirection: fileManagerPosition === 'bottom' ? 'column' : 'row',
+                      }}
+                    >
                     {/* 辅助视口 (分屏模式下的文件管理器，如果是左侧则排在前面) */}
                     {s.status === 'connected' && fileManagerPosition === 'left' && (
                       <>
@@ -1478,8 +1480,11 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              {/* 文件编辑器分栏 host（由 FileEditor 通过 Portal 渲染） */}
+              <div id="editor-split-host" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', order: 2, width: 0, transition: 'width 0.2s ease, height 0.2s ease' }} />
+            </div>
 
-              {/* 右侧：系统监控探针面板（强制常显）*/}
+            {/* 右侧：系统监控探针面板（强制常显）*/}
               {activeSession && activeSession.status === 'connected' && (
                 <>
                   <div

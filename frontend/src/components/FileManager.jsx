@@ -133,7 +133,10 @@ export default function FileManager({ sessionId, addToast }) {
   const [contextMenu, setContextMenu] = useState(null); // { pos, item }
   const [renamingItem, setRenamingItem] = useState(null);
   const [renameValue, setRenameValue] = useState('');
-  const [editFile, setEditFile] = useState(null);      // { path, name, content }
+  const [openEditFiles, setOpenEditFiles] = useState([]);      // [{ path, name, content }]
+  const [activeEditPath, setActiveEditPath] = useState(null);  // 当前激活的文件路径
+  const [editorMode, setEditorMode] = useState(() => localStorage.getItem('fileEditorMode') || 'modal');
+  const [editorSplitPosition, setEditorSplitPosition] = useState(() => localStorage.getItem('editorSplitPosition') || 'right');
   const [transferInfo, setTransferInfo] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounterRef = useRef(0);
@@ -255,9 +258,18 @@ export default function FileManager({ sessionId, addToast }) {
     const remotePath = currentPath === '/'
       ? `/${item.name}`
       : `${currentPath}/${item.name}`;
+
+    // 如果文件已在打开列表中，直接激活
+    if (openEditFiles.some(f => f.path === remotePath)) {
+      setActiveEditPath(remotePath);
+      return;
+    }
+
     try {
       const content = await AppGo.ReadFile(sessionId, remotePath);
-      setEditFile({ path: remotePath, name: item.name, content });
+      const newFile = { path: remotePath, name: item.name, content };
+      setOpenEditFiles(prev => [...prev, newFile]);
+      setActiveEditPath(remotePath);
     } catch (err) {
       addToast(`无法打开文件: ${err}`, 'error');
     }
@@ -268,10 +280,50 @@ export default function FileManager({ sessionId, addToast }) {
     try {
       await AppGo.WriteFile(sessionId, path, content);
       addToast('文件保存成功', 'success');
-      setEditFile(null);
+      // 更新 openEditFiles 中对应文件的内容
+      setOpenEditFiles(prev => prev.map(f => f.path === path ? { ...f, content } : f));
+      // 只有弹窗模式才在保存后自动关闭编辑器，popup/split 保持打开
+      if (editorMode === 'modal') {
+        closeEditFile(path);
+      }
     } catch (err) {
       addToast(`保存失败: ${err}`, 'error');
     }
+  };
+
+  // 关闭单个文件
+  const closeEditFile = (path) => {
+    setOpenEditFiles(prev => {
+      const next = prev.filter(f => f.path !== path);
+      // 如果关闭的是当前激活文件，激活下一个
+      if (activeEditPath === path) {
+        const idx = prev.findIndex(f => f.path === path);
+        const nextActive = next[idx] || next[idx - 1] || next[0] || null;
+        setActiveEditPath(nextActive?.path || null);
+      }
+      return next;
+    });
+  };
+
+  // 关闭所有文件
+  const closeAllEditFiles = () => {
+    setOpenEditFiles([]);
+    setActiveEditPath(null);
+  };
+
+  // 激活文件
+  const activateEditFile = (path) => {
+    setActiveEditPath(path);
+  };
+
+  const handleEditorModeChange = (mode) => {
+    setEditorMode(mode);
+    localStorage.setItem('fileEditorMode', mode);
+  };
+
+  const handleEditorSplitPositionChange = (pos) => {
+    setEditorSplitPosition(pos);
+    localStorage.setItem('editorSplitPosition', pos);
   };
 
   // Delete
@@ -647,118 +699,122 @@ export default function FileManager({ sessionId, addToast }) {
         </button>
       </div>
 
-      {/* File List */}
-      <div className="file-list">
-        <div className="file-list-header">
-          <span>{t('名称')}</span>
-          <span>{t('大小')}</span>
-          <span>{t('修改时间')}</span>
-          <span></span>
-        </div>
-
-        {/* Back button */}
-        {currentPath !== '/' && (
-          <div
-            className="file-item"
-            onClick={() => {
-              const parent = currentPath.substring(0, currentPath.lastIndexOf('/')) || '/';
-              loadDir(parent);
-            }}
-          >
-            <div className="file-name-cell">
-              <span className="file-icon">↩</span>
-              <span className="file-name is-dir">..</span>
-            </div>
-            <span />
-            <span />
-            <span />
+      {/* Content area: file list + optional split editor */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* File List */}
+        <div className="file-list" style={{ flex: 1, minWidth: 0 }}>
+          <div className="file-list-header">
+            <span>{t('名称')}</span>
+            <span>{t('大小')}</span>
+            <span>{t('修改时间')}</span>
+            <span></span>
           </div>
-        )}
 
-        {loading && (
-          <div className="empty-state">
-            <div className="spin" style={{ fontSize: 24 }}>⟳</div>
-            <div className="empty-state-text">{t('加载中...')}</div>
-          </div>
-        )}
-
-        {!loading && items.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-state-icon">📂</div>
-            <div className="empty-state-text">{t('目录为空')}</div>
-          </div>
-        )}
-
-        {!loading && items.map((item) => {
-          const isRenaming = renamingItem?.name === item.name;
-
-          return (
+          {/* Back button */}
+          {currentPath !== '/' && (
             <div
-              key={item.name}
               className="file-item"
-              onDoubleClick={() => item.isDirectory ? navigate(item) : isEditable(item.name) && handleEdit(item)}
-              onClick={() => item.isDirectory && navigate(item)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setContextMenu({ pos: { x: e.clientX, y: e.clientY }, item });
+              onClick={() => {
+                const parent = currentPath.substring(0, currentPath.lastIndexOf('/')) || '/';
+                loadDir(parent);
               }}
             >
               <div className="file-name-cell">
-                <span className="file-icon">{fileIcon(item.name, item.isDirectory)}</span>
-                {isRenaming ? (
-                  <input
-                    className="rename-input"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={confirmRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') confirmRename();
-                      if (e.key === 'Escape') setRenamingItem(null);
-                    }}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className={`file-name ${item.isDirectory ? 'is-dir' : ''}`}>
-                    {item.name}
-                  </span>
-                )}
+                <span className="file-icon">↩</span>
+                <span className="file-name is-dir">..</span>
               </div>
-
-              <span className="file-size">{item.isDirectory ? '-' : fmtSize(item.size)}</span>
-              <span className="file-date">{fmtDate(item.modifyTime)}</span>
-
-              <div className="file-actions">
-                {!item.isDirectory && isEditable(item.name) && (
-                  <button
-                    className="btn btn-ghost btn-sm btn-icon"
-                    title="编辑"
-                    onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
-                  >✏️</button>
-                )}
-                {!item.isDirectory && (
-                  <button
-                    className="btn btn-ghost btn-sm btn-icon"
-                    title="下载到本地"
-                    onClick={(e) => { e.stopPropagation(); handleDownload(item); }}
-                  >⬇️</button>
-                )}
-                <button
-                  className="btn btn-ghost btn-sm btn-icon"
-                  title="重命名"
-                  onClick={(e) => { e.stopPropagation(); startRename(item); }}
-                >✏</button>
-                <button
-                  className="btn btn-ghost btn-sm btn-icon"
-                  title="删除"
-                  style={{ color: 'var(--red)' }}
-                  onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
-                >🗑</button>
-              </div>
+              <span />
+              <span />
+              <span />
             </div>
-          );
-        })}
+          )}
+
+          {loading && (
+            <div className="empty-state">
+              <div className="spin" style={{ fontSize: 24 }}>⟳</div>
+              <div className="empty-state-text">{t('加载中...')}</div>
+            </div>
+          )}
+
+          {!loading && items.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-state-icon">📂</div>
+              <div className="empty-state-text">{t('目录为空')}</div>
+            </div>
+          )}
+
+          {!loading && items.map((item) => {
+            const isRenaming = renamingItem?.name === item.name;
+
+            return (
+              <div
+                key={item.name}
+                className="file-item"
+                onDoubleClick={() => item.isDirectory ? navigate(item) : isEditable(item.name) && handleEdit(item)}
+                onClick={() => item.isDirectory && navigate(item)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setContextMenu({ pos: { x: e.clientX, y: e.clientY }, item });
+                }}
+              >
+                <div className="file-name-cell">
+                  <span className="file-icon">{fileIcon(item.name, item.isDirectory)}</span>
+                  {isRenaming ? (
+                    <input
+                      className="rename-input"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={confirmRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') confirmRename();
+                        if (e.key === 'Escape') setRenamingItem(null);
+                      }}
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className={`file-name ${item.isDirectory ? 'is-dir' : ''}`}>
+                      {item.name}
+                    </span>
+                  )}
+                </div>
+
+                <span className="file-size">{item.isDirectory ? '-' : fmtSize(item.size)}</span>
+                <span className="file-date">{fmtDate(item.modifyTime)}</span>
+
+                <div className="file-actions">
+                  {!item.isDirectory && isEditable(item.name) && (
+                    <button
+                      className="btn btn-ghost btn-sm btn-icon"
+                      title="编辑"
+                      onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
+                    >✏️</button>
+                  )}
+                  {!item.isDirectory && (
+                    <button
+                      className="btn btn-ghost btn-sm btn-icon"
+                      title="下载到本地"
+                      onClick={(e) => { e.stopPropagation(); handleDownload(item); }}
+                    >⬇️</button>
+                  )}
+                  <button
+                    className="btn btn-ghost btn-sm btn-icon"
+                    title="重命名"
+                    onClick={(e) => { e.stopPropagation(); startRename(item); }}
+                  >✏</button>
+                  <button
+                    className="btn btn-ghost btn-sm btn-icon"
+                    title="删除"
+                    style={{ color: 'var(--red)' }}
+                    onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+                  >🗑</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
       </div>
 
       {/* Context Menu */}
@@ -801,12 +857,19 @@ export default function FileManager({ sessionId, addToast }) {
         </div>
       )}
 
-      {/* File Editor Modal */}
-      {editFile && (
+      {/* File Editor (modal/popup/split 均由 FileEditor 内部决定渲染方式) */}
+      {openEditFiles.length > 0 && (
         <FileEditor
-          file={editFile}
+          files={openEditFiles}
+          activePath={activeEditPath}
           onSave={handleSaveFile}
-          onClose={() => setEditFile(null)}
+          onCloseFile={closeEditFile}
+          onCloseAll={closeAllEditFiles}
+          onActivate={activateEditFile}
+          mode={editorMode}
+          onModeChange={handleEditorModeChange}
+          splitPosition={editorSplitPosition}
+          onSplitPositionChange={handleEditorSplitPositionChange}
         />
       )}
     </div>
