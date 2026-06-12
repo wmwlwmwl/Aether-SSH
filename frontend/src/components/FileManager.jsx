@@ -141,6 +141,29 @@ export default function FileManager({ sessionId, addToast }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounterRef = useRef(0);
 
+  // 当所有文件关闭时，重置分栏 host 宽度
+  useEffect(() => {
+    if (openEditFiles.length === 0) {
+      const host = document.getElementById('editor-split-host');
+      const container = document.getElementById('session-editor-container');
+      if (host) {
+        host.style.width = '0px';
+        host.style.height = '100%';
+        host.style.minWidth = '0px';
+        host.style.maxWidth = '0px';
+        host.style.minHeight = '0px';
+        host.style.maxHeight = '0px';
+        host.style.borderLeft = 'none';
+        host.style.borderRight = 'none';
+        host.style.borderTop = 'none';
+        host.style.order = '2';
+      }
+      if (container) {
+        container.style.flexDirection = 'row';
+      }
+    }
+  }, [openEditFiles.length]);
+
   const loadDir = useCallback(async (path) => {
     setLoading(true);
     try {
