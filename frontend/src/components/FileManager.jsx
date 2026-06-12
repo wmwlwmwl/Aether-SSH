@@ -374,10 +374,19 @@ export default function FileManager({ sessionId, addToast }) {
   const closeContextMenu = () => setContextMenu(null);
 
   // ── 拖拽上传 ────────────────────────────────────────────────
+  // Check if a file name is a hidden/system file that should be skipped
+  function isHiddenFile(name) {
+    return /^\./.test(name) || /^Thumbs\.db$/i.test(name) || /^desktop\.ini$/i.test(name);
+  }
+
   // Recursively traverse a FileSystemEntry to collect all File objects
   function traverseEntry(entry) {
     return new Promise((resolve) => {
       if (entry.isFile) {
+        if (isHiddenFile(entry.name)) {
+          resolve([]);
+          return;
+        }
         entry.file((file) => {
           file._fullPath = entry.fullPath;
           resolve([file]);
@@ -385,14 +394,22 @@ export default function FileManager({ sessionId, addToast }) {
       } else if (entry.isDirectory) {
         const reader = entry.createReader();
         const allEntries = [];
+        let emptyCount = 0;
         function readBatch() {
           reader.readEntries((entries) => {
             if (entries.length === 0) {
-              Promise.all(allEntries.map((e) => traverseEntry(e))).then((results) => {
-                resolve(results.flat());
-              });
+              emptyCount++;
+              // 连续两次返回空数组才确认读取完成（规避 Chrome readEntries 提前返回的 bug）
+              if (emptyCount >= 2) {
+                Promise.all(allEntries.map((e) => traverseEntry(e))).then((results) => {
+                  resolve(results.flat());
+                });
+              } else {
+                readBatch();
+              }
             } else {
               allEntries.push(...entries);
+              emptyCount = 0;
               readBatch();
             }
           }, () => resolve([]));
@@ -446,25 +463,41 @@ export default function FileManager({ sessionId, addToast }) {
     dragCounterRef.current = 0;
 
     const items = Array.from(e.dataTransfer.items);
-    const droppedFiles = Array.from(e.dataTransfer.files || []);
+    const droppedFiles = Array.from(e.dataTransfer.files || []).filter(f => !isHiddenFile(f.name));
     if (items.length === 0 && droppedFiles.length === 0) return;
 
     setTransferInfo({ name: '正在上传...', progress: 0, direction: 'upload' });
 
-    try {
-      let fileCount = 0;
+    let fileCount = 0;
+    const uploadedNames = new Set(); // 追踪所有已成功上传的文件名
+    const pendingFailures = new Set(); // 记录首次上传失败的文件名，待 droppedFiles 兜底后确认
 
+    try {
       // ── 方式一：通过 items + webkitGetAsEntry API（支持文件夹结构） ──
       for (const item of items) {
         const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
 
         if (entry && entry.isFile) {
           // ── 单文件上传（读取内容 → 传后端） ──
-          const file = item.getAsFile();
-          if (!file) continue;
-          const content = await readFileAsArrayBuffer(file);
-          await AppGo.UploadFileContent(sessionId, file.name, currentPath, content);
-          fileCount++;
+          let file;
+          try { file = item.getAsFile(); } catch (_) { file = null; }
+          if (!file) {
+            // getAsFile 读取失败不记为失败，留给 droppedFiles 兜底重试
+            continue;
+          }
+          try {
+            const content = await readFileAsArrayBuffer(file);
+            await AppGo.UploadFileContent(sessionId, file.name, currentPath, content);
+            fileCount++;
+            uploadedNames.add(file.name);
+          } catch (err) {
+            if (err.name === 'NotFoundError') {
+              console.warn('跳过文件夹占位符:', file.name);
+            } else {
+              console.warn('上传文件失败，待 droppedFiles 兜底:', file.name, err);
+              pendingFailures.add(file.name);
+            }
+          }
 
         } else if (entry && entry.isDirectory) {
           // ── 文件夹上传（遍历 + 按目录结构上传） ──
@@ -492,33 +525,76 @@ export default function FileManager({ sessionId, addToast }) {
           }
 
           // 创建远程目录结构
-          await AppGo.Mkdir(sessionId, baseRemote);
-          for (const sd of subDirs) {
-            await AppGo.Mkdir(sessionId, `${baseRemote}/${sd}`);
+          try {
+            await AppGo.Mkdir(sessionId, baseRemote);
+            for (const sd of subDirs) {
+              await AppGo.Mkdir(sessionId, `${baseRemote}/${sd}`);
+            }
+          } catch (err) {
+            console.warn('创建目录失败:', baseRemote, err);
           }
 
-          // 读取文件内容并上传
+          // 读取文件内容并上传（每个文件独立 try-catch，避免一个失败中断全部）
           for (const job of fileJobs) {
             const remoteDir = job.subDir
               ? `${baseRemote}/${job.subDir}`
               : baseRemote;
-            const content = await readFileAsArrayBuffer(job.file);
-            await AppGo.UploadFileContent(sessionId, job.file.name, remoteDir, content);
+            try {
+              const content = await readFileAsArrayBuffer(job.file);
+              await AppGo.UploadFileContent(sessionId, job.file.name, remoteDir, content);
+              fileCount++;
+              uploadedNames.add(job.file.name);
+            } catch (err) {
+              console.warn('上传文件失败:', job.file.name, err);
+              pendingFailures.add(job.file.name);
+            }
+          }
+
+        } else if (!entry) {
+          // webkitGetAsEntry 返回 null（混合拖拽时常见），尝试 getAsFile 上传
+          // 失败不记为最终失败，留给 droppedFiles 兜底
+          let file;
+          try { file = item.getAsFile(); } catch (_) { file = null; }
+          if (!file) continue;
+          try {
+            const content = await readFileAsArrayBuffer(file);
+            await AppGo.UploadFileContent(sessionId, file.name, currentPath, content);
             fileCount++;
+            uploadedNames.add(file.name);
+          } catch (err) {
+            console.warn('getAsFile 上传失败，留给 droppedFiles 兜底:', file.name, err);
+            // 不加入 uploadedNames，让 droppedFiles 回退重新尝试
           }
         }
       }
 
-      // ── 方式二：如果 items 方式未识别到文件，回退到 dataTransfer.files ──
-      if (fileCount === 0 && droppedFiles.length > 0) {
-        for (const file of droppedFiles) {
+      // ── 方式二：droppedFiles 兜底（无条件执行，避免 fileCount/droppedFiles.length 比较不准） ──
+      for (const file of droppedFiles) {
+        if (uploadedNames.has(file.name)) continue;
+        try {
           const content = await readFileAsArrayBuffer(file);
           await AppGo.UploadFileContent(sessionId, file.name, currentPath, content);
           fileCount++;
+          uploadedNames.add(file.name);
+          pendingFailures.delete(file.name); // 兜底成功，移出失败记录
+        } catch (err) {
+          // 某些浏览器会把拖拽的文件夹本身放入 droppedFiles 作为占位符，读取时报 NotFoundError
+          if (err.name === 'NotFoundError') {
+            console.warn('跳过文件夹占位符:', file.name);
+          } else {
+            console.warn('上传文件失败:', file.name, err);
+            pendingFailures.add(file.name);
+          }
         }
       }
 
-      addToast(`上传成功: ${fileCount} 项`, 'success');
+      const failCount = pendingFailures.size;
+      if (failCount > 0) {
+        const failedNames = Array.from(pendingFailures).slice(0, 3).join(', ');
+        addToast(`上传完成: ${fileCount} 项成功, ${failCount} 项失败 (${failedNames})`, 'warning');
+      } else {
+        addToast(`上传成功: ${fileCount} 项`, 'success');
+      }
       await loadDir(currentPath);
     } catch (err) {
       if (err) addToast(`上传失败: ${err}`, 'error');
