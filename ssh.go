@@ -1480,6 +1480,80 @@ func (m *SSHManager) UploadFile(sessionId string, localPath string, remotePath s
 	return err
 }
 
+// UploadDir recursively uploads a local directory to a remote path
+func (m *SSHManager) UploadDir(sessionId string, localDir string, remoteDir string) error {
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
+	}
+
+	remoteDir = filepath.ToSlash(remoteDir)
+
+	return filepath.Walk(localDir, func(localPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(localDir, localPath)
+		if err != nil {
+			return err
+		}
+
+		remotePath := filepath.ToSlash(filepath.Join(remoteDir, relPath))
+
+		if info.IsDir() {
+			return sftpClient.MkdirAll(remotePath)
+		}
+
+		src, err := os.Open(localPath)
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+
+		dst, err := sftpClient.Create(remotePath)
+		if err != nil {
+			return err
+		}
+		defer dst.Close()
+
+		var totalSize int64 = 0
+		if stat, err := src.Stat(); err == nil {
+			totalSize = stat.Size()
+		}
+
+		pr := &progressReader{
+			Reader:    src,
+			ctx:       m.ctx,
+			sessionId: sessionId,
+			total:     totalSize,
+			lastEmit:  time.Now(),
+		}
+
+		buf := make([]byte, 2*1024*1024)
+		_, err = io.CopyBuffer(dst, pr, buf)
+		return err
+	})
+}
+
+// UploadFileContent uploads file content from memory to a remote path
+func (m *SSHManager) UploadFileContent(sessionId string, fileName string, remoteDir string, content []byte) error {
+	_, sftpClient, err := m.getClientEntry(sessionId)
+	if err != nil {
+		return err
+	}
+
+	destPath := filepath.ToSlash(filepath.Join(remoteDir, fileName))
+	dst, err := sftpClient.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	_, err = dst.Write(content)
+	return err
+}
+
 func (m *SSHManager) DownloadFile(sessionId string, remotePath string, localPath string) error {
 	_, sftpClient, err := m.getClientEntry(sessionId)
 	if err != nil {

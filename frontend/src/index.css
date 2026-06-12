@@ -1279,6 +1279,30 @@ a { color: var(--blue); text-decoration: none; }
   transition: width 0.3s ease;
 }
 
+/* ── Drag Overlay ──────────────────────────────────────────── */
+.drag-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(59, 130, 246, 0.08);
+  border: 2px dashed var(--blue);
+  border-radius: var(--radius-md);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.drag-overlay-text {
+  background: var(--bg-2);
+  padding: 16px 32px;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--blue);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+}
+
 /* ── WebDAV Settings ─────────────────────────────────────────── */
 .webdav-section {
   background: var(--bg-3);

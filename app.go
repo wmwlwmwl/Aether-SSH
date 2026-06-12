@@ -257,7 +257,22 @@ func (a *App) UncompressItem(sessionId string, remotePath string) error {
 	return a.sshManager.UncompressItem(sessionId, remotePath)
 }
 
-// TODO: File upload/download using standard file dialogs in Wails
+// UploadLocalFile uploads a local file to a remote directory (no dialog)
+func (a *App) UploadLocalFile(sessionId string, localFile string, remoteDir string) error {
+	return a.sshManager.UploadFile(sessionId, localFile, remoteDir)
+}
+
+// UploadLocalDir recursively uploads a local directory to a remote directory (no dialog)
+func (a *App) UploadLocalDir(sessionId string, localDir string, remoteDir string) error {
+	return a.sshManager.UploadDir(sessionId, localDir, remoteDir)
+}
+
+// UploadFileContent uploads file content from memory to a remote path
+func (a *App) UploadFileContent(sessionId string, fileName string, remoteDir string, content []byte) error {
+	return a.sshManager.UploadFileContent(sessionId, fileName, remoteDir, content)
+}
+
+// UploadFile opens a file dialog to select a local file and uploads it to the remote path
 func (a *App) UploadFile(sessionId string, remotePath string) error {
 	filepaths, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select File to Upload",

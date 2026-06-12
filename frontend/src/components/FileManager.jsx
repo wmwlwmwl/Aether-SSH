@@ -135,6 +135,8 @@ export default function FileManager({ sessionId, addToast }) {
   const [renameValue, setRenameValue] = useState('');
   const [editFile, setEditFile] = useState(null);      // { path, name, content }
   const [transferInfo, setTransferInfo] = useState(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
 
   const loadDir = useCallback(async (path) => {
     setLoading(true);
@@ -371,13 +373,172 @@ export default function FileManager({ sessionId, addToast }) {
 
   const closeContextMenu = () => setContextMenu(null);
 
+  // ── 拖拽上传 ────────────────────────────────────────────────
+  // Recursively traverse a FileSystemEntry to collect all File objects
+  function traverseEntry(entry) {
+    return new Promise((resolve) => {
+      if (entry.isFile) {
+        entry.file((file) => {
+          file._fullPath = entry.fullPath;
+          resolve([file]);
+        }, () => resolve([]));
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        const allEntries = [];
+        function readBatch() {
+          reader.readEntries((entries) => {
+            if (entries.length === 0) {
+              Promise.all(allEntries.map((e) => traverseEntry(e))).then((results) => {
+                resolve(results.flat());
+              });
+            } else {
+              allEntries.push(...entries);
+              readBatch();
+            }
+          }, () => resolve([]));
+        }
+        readBatch();
+      } else {
+        resolve([]);
+      }
+    });
+  }
+
+  // Read a File as Array<number> for sending to the backend (via Wails JSON serialization)
+  function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        // Convert Uint8Array to plain Array so JSON.stringify produces [72,101,...] instead of {"0":72,"1":101,...}
+        resolve(Array.from(new Uint8Array(reader.result)));
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    setIsDragOver(true);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    dragCounterRef.current = 0;
+
+    const items = Array.from(e.dataTransfer.items);
+    const droppedFiles = Array.from(e.dataTransfer.files || []);
+    if (items.length === 0 && droppedFiles.length === 0) return;
+
+    setTransferInfo({ name: '正在上传...', progress: 0, direction: 'upload' });
+
+    try {
+      let fileCount = 0;
+
+      // ── 方式一：通过 items + webkitGetAsEntry API（支持文件夹结构） ──
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+
+        if (entry && entry.isFile) {
+          // ── 单文件上传（读取内容 → 传后端） ──
+          const file = item.getAsFile();
+          if (!file) continue;
+          const content = await readFileAsArrayBuffer(file);
+          await AppGo.UploadFileContent(sessionId, file.name, currentPath, content);
+          fileCount++;
+
+        } else if (entry && entry.isDirectory) {
+          // ── 文件夹上传（遍历 + 按目录结构上传） ──
+          const files = await traverseEntry(entry);
+          if (files.length === 0) continue;
+
+          const dirName = entry.name;
+          const baseRemote =
+            currentPath === '/' ? `/${dirName}` : `${currentPath}/${dirName}`;
+
+          // 收集目录结构和文件任务
+          const subDirs = new Set();
+          const fileJobs = [];
+          for (const f of files) {
+            let relPath = f._fullPath;
+            if (relPath.startsWith(entry.fullPath)) {
+              relPath = relPath.slice(entry.fullPath.length);
+            }
+            relPath = relPath.replace(/^\//, '');
+            const parts = relPath.split('/');
+            parts.pop(); // 去掉文件名
+            const subDir = parts.join('/');
+            if (subDir) subDirs.add(subDir);
+            fileJobs.push({ file: f, subDir });
+          }
+
+          // 创建远程目录结构
+          await AppGo.Mkdir(sessionId, baseRemote);
+          for (const sd of subDirs) {
+            await AppGo.Mkdir(sessionId, `${baseRemote}/${sd}`);
+          }
+
+          // 读取文件内容并上传
+          for (const job of fileJobs) {
+            const remoteDir = job.subDir
+              ? `${baseRemote}/${job.subDir}`
+              : baseRemote;
+            const content = await readFileAsArrayBuffer(job.file);
+            await AppGo.UploadFileContent(sessionId, job.file.name, remoteDir, content);
+            fileCount++;
+          }
+        }
+      }
+
+      // ── 方式二：如果 items 方式未识别到文件，回退到 dataTransfer.files ──
+      if (fileCount === 0 && droppedFiles.length > 0) {
+        for (const file of droppedFiles) {
+          const content = await readFileAsArrayBuffer(file);
+          await AppGo.UploadFileContent(sessionId, file.name, currentPath, content);
+          fileCount++;
+        }
+      }
+
+      addToast(`上传成功: ${fileCount} 项`, 'success');
+      await loadDir(currentPath);
+    } catch (err) {
+      if (err) addToast(`上传失败: ${err}`, 'error');
+    } finally {
+      setTransferInfo(null);
+    }
+  };
+
   return (
     <div
       className="file-manager"
+      style={{ position: 'relative' }}
       onContextMenu={(e) => {
         e.preventDefault();
         setContextMenu({ pos: { x: e.clientX, y: e.clientY }, item: null });
       }}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       {/* Toolbar */}
       <div className="file-toolbar">
@@ -523,6 +684,13 @@ export default function FileManager({ sessionId, addToast }) {
           );
         })}
       </div>
+
+      {/* Context Menu */}
+      {isDragOver && (
+        <div className="drag-overlay">
+          <div className="drag-overlay-text">⬆ {t('释放以上传文件/文件夹')}</div>
+        </div>
+      )}
 
       {/* Context Menu */}
       {contextMenu && (
