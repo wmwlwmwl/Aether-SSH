@@ -220,11 +220,14 @@ function TreeNode({ item, index, path, selectedPath, onSelect, onDelete, onAddCm
   );
 }
 
-export default function QuickCommands({ sessionId, addToast }) {
+export default function QuickCommands({ sessionId, addToast, connectedSessions = [] }) {
   const { t } = useTranslation();
   const [commands, setCommands] = useState([]);
   const [selectedPath, setSelectedPath] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [sendTarget, setSendTarget] = useState('current'); // 'current' | 'all'
+  const [quickCmd, setQuickCmd] = useState('');
+  const [quickAddCR, setQuickAddCR] = useState(true);
 
   // 编辑/添加对话框
   const [dialog, setDialog] = useState(null); // { type:'add'|'edit', groupPath?, item? }
@@ -555,8 +558,31 @@ export default function QuickCommands({ sessionId, addToast }) {
     window.dispatchEvent(new CustomEvent('ssh-command-history', {
       detail: { sessionId, command: filled, time: new Date().toISOString(), source: 'input' }
     }));
-    AppGo.WriteTerminal(sessionId, finalCmd);
-    if (addToast) addToast('已发送指令到终端', 'info', 2000);
+
+    if (sendTarget === 'all' && connectedSessions.length > 0) {
+      connectedSessions.forEach(s => {
+        AppGo.WriteTerminal(s.id, finalCmd);
+      });
+      if (addToast) addToast('已发送到 '+connectedSessions.length+' 个会话', 'info', 2000);
+    } else {
+      AppGo.WriteTerminal(sessionId, finalCmd);
+      if (addToast) addToast('已发送指令到终端', 'info', 2000);
+    }
+  };
+
+  // ── 发送临时命令（不保存） ──────────────────────────
+  const sendQuick = () => {
+    const cmd = quickCmd.trim();
+    if (!cmd) return;
+    const finalCmd = quickAddCR ? cmd + '\r' : cmd;
+    if (sendTarget === 'all' && connectedSessions.length > 0) {
+      connectedSessions.forEach(s => AppGo.WriteTerminal(s.id, finalCmd));
+      if (addToast) addToast('已发送到 '+connectedSessions.length+' 个会话', 'info', 2000);
+    } else {
+      AppGo.WriteTerminal(sessionId, finalCmd);
+      if (addToast) addToast('已发送', 'info', 1500);
+    }
+    setQuickCmd('');
   };
 
   // ── 插入参数按钮 ────────────────────────────────────
@@ -682,7 +708,7 @@ export default function QuickCommands({ sessionId, addToast }) {
         {/* ── 右侧编辑器 ── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* 选中了命令 → 显示编辑器 */}
-          {selectedItem && selectedItem.command ? (
+          {selectedItem ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px 14px', gap: 10 }}>
               {/* 名称 */}
               <div>
@@ -933,7 +959,23 @@ export default function QuickCommands({ sessionId, addToast }) {
                     末尾添加回车符CR
                   </label>
                   <div style={{ flex: 1 }} />
-                  <span style={{ fontSize: 11, color: '#6e7681' }}>发送到 当前会话</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 11, color: '#6e7681' }}>发送到</span>
+                    <select
+                      value={sendTarget}
+                      onChange={(e) => setSendTarget(e.target.value)}
+                      style={{
+                        fontSize: 11, padding: '2px 6px', borderRadius: 3,
+                        background: '#0d1117', border: '1px solid #30363d',
+                        color: '#cdd9e5', outline: 'none', cursor: 'pointer',
+                      }}
+                    >
+                      <option value="current">当前会话</option>
+                      {connectedSessions.length > 1 && (
+                        <option value="all">全部会话 ({connectedSessions.length})</option>
+                      )}
+                    </select>
+                  </div>
                   <button
                     onClick={() => doExecute(selectedItem)}
                     style={{
@@ -986,6 +1028,55 @@ export default function QuickCommands({ sessionId, addToast }) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ── 底部快速命令栏（不保存，直接发送） ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        borderTop: '1px solid rgba(255,255,255,0.06)',
+        padding: '5px 10px', background: '#0d1117', flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 11, color: '#8b949e', whiteSpace: 'nowrap' }}>快速命令</span>
+        <input
+          type="text"
+          value={quickCmd}
+          onChange={e => setQuickCmd(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') sendQuick(); }}
+          placeholder="输入临时命令直接发送（不保存）..."
+          style={{ flex: 1, ...inputStyle, fontSize: 11, padding: '4px 8px' }}
+        />
+        <label style={{ fontSize: 11, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={quickAddCR} onChange={e => setQuickAddCR(e.target.checked)} style={{ margin: 0, cursor: 'pointer' }} />
+          回车
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 11, color: '#6e7681' }}>→</span>
+          <select
+            value={sendTarget}
+            onChange={(e) => setSendTarget(e.target.value)}
+            style={{
+              fontSize: 11, padding: '2px 6px', borderRadius: 3,
+              background: '#0d1117', border: '1px solid #30363d',
+              color: '#cdd9e5', outline: 'none', cursor: 'pointer',
+            }}
+          >
+            <option value="current">当前</option>
+            {connectedSessions.length > 1 && (
+              <option value="all">全部 ({connectedSessions.length})</option>
+            )}
+          </select>
+        </div>
+        <button
+          onClick={sendQuick}
+          disabled={!quickCmd.trim()}
+          style={{
+            background: quickCmd.trim() ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.04)',
+            border: '1px solid ' + (quickCmd.trim() ? 'rgba(34,197,94,0.35)' : 'rgba(255,255,255,0.1)'),
+            color: quickCmd.trim() ? '#22c55e' : '#484f58',
+            borderRadius: 3, padding: '3px 12px', fontSize: 11, cursor: quickCmd.trim() ? 'pointer' : 'default',
+            transition: 'all 0.15s',
+          }}
+        >🚀 发送</button>
       </div>
 
       {/* ── 右键上下文菜单 ── */}

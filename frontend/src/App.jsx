@@ -984,6 +984,10 @@ export default function App() {
     (s.username || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const connectedSessions = sessions
+    .filter(s => s.status === 'connected')
+    .filter((s, i, arr) => arr.findIndex(x => x.serverId === s.serverId) === i);
+
 
   return (
     <div className="app-layout">
@@ -1400,6 +1404,7 @@ export default function App() {
                               status={s.status}
                               isActive={activeSessionId === s.id && activeTerminalId === t.id && (contentTab === 'terminal' || fileManagerPosition !== 'tab')}
                               serverName={s.serverName}
+                              connectedSessions={connectedSessions}
                             />
                           </div>
                         ))}

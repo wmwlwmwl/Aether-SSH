@@ -104,7 +104,7 @@ function readDisplayedCommand(term) {
   return candidate.trim();
 }
 
-export default function Terminal({ sessionId, serverId, status, isActive, serverName }) {
+export default function Terminal({ sessionId, serverId, status, isActive, serverName, connectedSessions = [] }) {
   const containerRef   = useRef(null);
   const termRef        = useRef(null);
   const fitAddonRef    = useRef(null);
@@ -1070,7 +1070,7 @@ export default function Terminal({ sessionId, serverId, status, isActive, server
             zIndex: 100,
             overflow: 'hidden',
           }}>
-            <QuickCommands sessionId={sessionId} addToast={() => {}} />
+            <QuickCommands sessionId={sessionId} addToast={() => {}} connectedSessions={connectedSessions} />
           </div>
         </>
       )}
