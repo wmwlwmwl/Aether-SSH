@@ -42,6 +42,8 @@ const I18N = {
       fontDesc: '选择软件界面使用的字体',
       termFontLabel: '终端字体大小',
       termFontDesc: '调节终端的字符显示大小',
+      termEchoLabel: '终端输入回显',
+      termEchoDesc: '关闭后输入密码等敏感内容时不会显示字符',
       themeTitle: '界面主题',
       themeLabel: '主题',
       themeDesc: '选择浅色、深色或跟随系统设置',
@@ -96,6 +98,8 @@ const I18N = {
       fontDesc: 'Choose the font used in the interface',
       termFontLabel: 'Terminal Font Size',
       termFontDesc: 'Adjust terminal font size',
+      termEchoLabel: 'Terminal Input Echo',
+      termEchoDesc: 'When disabled, sensitive input like passwords will not be displayed',
       themeTitle: 'Interface Theme',
       themeLabel: 'Theme',
       themeDesc: 'Choose Light, Dark or System',
@@ -328,6 +332,7 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
   const [termBgImage, setTermBgImage] = useState(localStorage.getItem('termBgImage') || '');
   const [termBgOpacity, setTermBgOpacity] = useState(parseFloat(localStorage.getItem('termBgOpacity') || '0.15'));
   const [terminalColorTheme, setTerminalColorTheme] = useState(localStorage.getItem('terminalColorTheme') || 'aether');
+  const [terminalLocalEcho, setTerminalLocalEcho] = useState(localStorage.getItem('terminalLocalEcho') !== 'false');
 
   const t = I18N[language] || I18N['zh-CN'];
 
@@ -443,6 +448,12 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
     setTerminalFontSize(size);
     localStorage.setItem('terminalFontSize', size);
     window.dispatchEvent(new CustomEvent('terminal-font-size-changed', { detail: size }));
+  };
+
+  const handleTerminalLocalEchoChange = (enabled) => {
+    setTerminalLocalEcho(enabled);
+    localStorage.setItem('terminalLocalEcho', String(enabled));
+    window.dispatchEvent(new CustomEvent('terminal-local-echo-changed', { detail: enabled }));
   };
 
   const handleTermBgUpload = (e) => {
@@ -1153,17 +1164,51 @@ export default function SettingsModal({ onClose, addToast, onRestored }) {
                         <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.termFontDesc}</div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <input 
-                          type="range" 
-                          min="10" 
-                          max="28" 
-                          step="1" 
-                          value={terminalFontSize} 
-                          onChange={handleTerminalFontChange} 
+                        <input
+                          type="range"
+                          min="10"
+                          max="28"
+                          step="1"
+                          value={terminalFontSize}
+                          onChange={handleTerminalFontChange}
                           style={{ cursor: 'pointer' }}
                         />
                         <span style={{ fontSize: 13, width: 32, textAlign: 'right', color: 'var(--text-1)' }}>{terminalFontSize}px</span>
                       </div>
+                    </div>
+                    <div className="divider" style={{ margin: '12px 0', borderTop: '1px solid var(--border)' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ color: 'var(--text-1)', fontSize: 13 }}>{t.appearance.termEchoLabel}</div>
+                        <div style={{ color: 'var(--text-4)', fontSize: 11 }}>{t.appearance.termEchoDesc}</div>
+                      </div>
+                      <label className="toggle-switch" style={{ position: 'relative', display: 'inline-block', width: 40, height: 22 }}>
+                        <input
+                          type="checkbox"
+                          checked={terminalLocalEcho}
+                          onChange={(e) => handleTerminalLocalEchoChange(e.target.checked)}
+                          style={{ opacity: 0, width: 0, height: 0 }}
+                        />
+                        <span style={{
+                          position: 'absolute',
+                          cursor: 'pointer',
+                          inset: 0,
+                          background: terminalLocalEcho ? 'var(--green)' : 'var(--bg-3)',
+                          borderRadius: 22,
+                          transition: 'background 0.2s',
+                        }}>
+                          <span style={{
+                            position: 'absolute',
+                            height: 18,
+                            width: 18,
+                            left: terminalLocalEcho ? 20 : 2,
+                            bottom: 2,
+                            background: 'white',
+                            borderRadius: '50%',
+                            transition: 'left 0.2s',
+                          }} />
+                        </span>
+                      </label>
                     </div>
                   </div>
                 </div>

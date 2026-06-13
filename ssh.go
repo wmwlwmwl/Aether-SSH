@@ -218,23 +218,13 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 				return fmt.Errorf("主机密钥已变更，请在弹窗中确认")
 			}
 
-			// 主机限流会断开连接（EOF）或拒绝认证，重试 5 次（间隔递增）
+			// 认证失败或连接被拒绝，立即返回错误
 			errStr := dialErr.Error()
 			if strings.Contains(errStr, "unable to authenticate") ||
 				strings.Contains(errStr, "no supported methods remain") ||
 				strings.Contains(errStr, "EOF") ||
 				strings.Contains(errStr, "connection reset") ||
 				strings.Contains(errStr, "connection refused") {
-				for retry := 0; retry < 5; retry++ {
-					delay := time.Duration(retry+1) * 3 * time.Second // 3s, 6s, 9s, 12s, 15s
-					time.Sleep(delay)
-					client, dialErr = ssh.Dial("tcp", target, config)
-					if dialErr == nil {
-						goto dialOK
-					}
-				}
-				// 5 次重试均失败，通知前端
-				errStr = dialErr.Error()
 				if m.ctx != nil {
 					runtime.EventsEmit(m.ctx, "ssh-auth-failed", map[string]interface{}{
 						"sessionId": sessionId,
@@ -250,8 +240,6 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 
 			return dialErr
 		}
-
-	dialOK:
 
 		var sftpErr error
 		sftpClient, sftpErr = sftp.NewClient(client)

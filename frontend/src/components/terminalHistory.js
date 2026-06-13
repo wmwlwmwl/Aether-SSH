@@ -53,7 +53,10 @@ export function reduceTerminalHistoryInput(state, chunk) {
 
     if (char === '\r' || char === '\n') {
       const command = buffer.trim();
-      if (command) commands.push(command);
+      // 与上一条记录去重：相同的命令只记录一次
+      if (command && commands[commands.length - 1] !== command) {
+        commands.push(command);
+      }
       buffer = '';
 
       if (char === '\r' && chunk[i + 1] === '\n') {
