@@ -739,7 +739,11 @@ export default function Terminal({ sessionId, serverId, historyServerId, status,
   const deleteHistoryItem = (id) => {
     setHistoryList(prev => {
       const next = prev.filter(item => item.id !== id);
-      AppGo.SaveCommandHistory(historyServerId, JSON.stringify(next)).catch(() => {});
+      if (historyMode === 'global') {
+        AppGo.SaveGlobalCommandHistory(JSON.stringify(next)).catch(() => {});
+      } else {
+        AppGo.SaveCommandHistory(historyServerId, JSON.stringify(next)).catch(() => {});
+      }
       return next;
     });
   };
@@ -1025,8 +1029,11 @@ export default function Terminal({ sessionId, serverId, historyServerId, status,
                 <button
                   onClick={() => {
                     setHistoryList([]);
-                    AppGo.SaveCommandHistory(historyServerId, '[]').catch(() => {});
-                    window.dispatchEvent(new CustomEvent('ssh-history-cleared', { detail: { sessionId: serverId } }));
+                    if (historyMode === 'global') {
+                      AppGo.SaveGlobalCommandHistory('[]').catch(() => {});
+                    } else {
+                      AppGo.SaveCommandHistory(historyServerId, '[]').catch(() => {});
+                    }
                   }}
                   style={{ ...btnStyle('red'), fontSize: 11, padding: '2px 8px' }}
                 >

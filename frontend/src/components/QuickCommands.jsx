@@ -911,7 +911,7 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
               </div>
 
               {/* 命令 */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <label style={{ fontSize: 11, color: '#8b949e' }}>命令</label>
                   <div style={{ display: 'flex', gap: 4 }}>
@@ -952,9 +952,9 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
                     }
                   }}
                   style={{
-                    ...inputStyle, flex: 1, resize: 'none',
+                    ...inputStyle, resize: 'none', height: 72,
                     fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
-                    lineHeight: 1.5, minHeight: 100,
+                    lineHeight: 1.5, minHeight: 60,
                   }}
                 />
 
@@ -1004,9 +1004,9 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
                   if (params.length === 0) return null;
                   const cmdKey = selectedItem.command;
                   return (
-                    <div style={{ marginBottom: 6 }}>
+                    <div style={{ marginBottom: 6, overflowX: 'auto', overflowY: 'visible' }}>
                       {/* 参数行：标签名在外面，输入框 + 历史按钮 */}
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap' }}>
                         {params.map(p => {
                           const isOpen = historyDropdown?.cmdKey === cmdKey && historyDropdown.paramNum === p.num;
                           const histList = (paramHistory[cmdKey]?.[p.num]) || [];

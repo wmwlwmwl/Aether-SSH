@@ -461,7 +461,7 @@ export default function App() {
   }, []);
 
   // ── 重连会话核心逻辑 ────────────────────────────────────────
-  const reconnectSession = useCallback(async (session) => {
+  const reconnectSession = useCallback(async (session, requestingTerminalId) => {
     setSessions((prev) =>
       prev.map((s) => (s.id === session.id ? { ...s, status: 'connecting' } : s))
     );
@@ -474,11 +474,29 @@ export default function App() {
 
     try {
       await AppGo.ConnectSSH(session.id, session.serverId);
+
+      // 重建子终端 (终端2, 终端3, ...)
+      const subTerminals = (session.terminals || []).filter(t => t.id !== session.id);
+      const oldToNew = { [session.id]: session.id };
+      const newTerminals = [{ id: session.id, label: '终端1' }];
+      for (const sub of subTerminals) {
+        try {
+          const newTermId = await AppGo.OpenTerminal(session.id);
+          oldToNew[sub.id] = newTermId;
+          newTerminals.push({ id: newTermId, label: sub.label });
+        } catch (_) {}
+      }
+
       setSessions((prev) =>
-        prev.map((s) => (s.id === session.id ? { ...s, status: 'connected' } : s))
+        prev.map((s) => (s.id === session.id ? { ...s, status: 'connected', terminals: newTerminals } : s))
       );
       setConnectingServer(null);
       addToast('重新连接成功', 'success');
+
+      // 切回重连前所在的终端
+      if (requestingTerminalId && oldToNew[requestingTerminalId]) {
+        setActiveTerminalId(oldToNew[requestingTerminalId]);
+      }
 
       // 后台重新部署并激活探针状态
       try {
@@ -722,9 +740,15 @@ export default function App() {
   useEffect(() => {
     const handleReconnectTrigger = (e) => {
       const sessId = e.detail;
-      const sess = sessions.find((s) => s.id === sessId);
+      // 先按 sessionId 查找
+      let sess = sessions.find((s) => s.id === sessId);
+      // 如果是子终端 ID，找到父会话
+      if (!sess) {
+        const parent = sessions.find(s => s.terminals?.some(t => t.id === sessId));
+        if (parent) sess = parent;
+      }
       if (sess) {
-        reconnectSession(sess);
+        reconnectSession(sess, sessId);
       }
     };
     window.addEventListener('ssh-reconnect-trigger', handleReconnectTrigger);
