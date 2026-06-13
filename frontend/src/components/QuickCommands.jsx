@@ -234,6 +234,8 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
   const [dlgName, setDlgName] = useState('');
   const [dlgCmd, setDlgCmd] = useState('');
   const [dlgAddCR, setDlgAddCR] = useState(true);
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [groupPickerPos, setGroupPickerPos] = useState({ x: 0, y: 0 });
 
   // 参数历史（按命令缓存，存到文件）
   const [paramHistory, setParamHistory] = useState({});
@@ -255,6 +257,7 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
   const [editGroupName, setEditGroupName] = useState('');
 
   const treeRef = useRef(null);
+  const groupPickerRef = useRef(null);
   const dragSourceRef = useRef(null);
   const mountedRef = useRef(true);
 
@@ -410,6 +413,22 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
       cur = cur[idx].children || [];
     }
     return { parent: null, idx: -1, item: null };
+  };
+
+  // ── 递归收集所有分组 ──────────────────────────────────
+  const collectGroups = (list, basePath = '') => {
+    const groups = [];
+    if (!Array.isArray(list)) return groups;
+    list.forEach((item, i) => {
+      const path = basePath ? `${basePath}/${i}` : String(i);
+      if (item.type === 'group') {
+        groups.push({ name: item.name, path, children: item.children || [] });
+        if (item.children) {
+          groups.push(...collectGroups(item.children, path));
+        }
+      }
+    });
+    return groups;
   };
 
   // ── 选中处理 ────────────────────────────────────────
@@ -1303,7 +1322,7 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
       {/* ── 添加/编辑对话框（覆盖层） ── */}
       {dialog && (
         <>
-          <div onClick={() => setDialog(null)} style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.4)' }} />
+          <div onClick={() => { setShowGroupPicker(false); setDialog(null); }} style={{ position: 'fixed', inset: 0, zIndex: 299, background: 'rgba(0,0,0,0.4)' }} />
           <div style={{
             position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 300,
             width: 480, background: '#1c2128', border: '1px solid #30363d', borderRadius: 8,
@@ -1315,9 +1334,37 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
 
             {/* 添加到提示（仅添加命令时显示） */}
             {dialog.type === 'add' && (
-              <div style={{ fontSize: 12, color: '#6e7681', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span>添加到:</span>
-                <span style={{ color: '#58a6ff', fontWeight: 500 }}>{dialog.groupName || '根目录'}</span>
+              <div style={{ fontSize: 12, color: '#6e7681', marginBottom: 12, userSelect: 'none' }}>
+                <span style={{ marginRight: 6 }}>添加到:</span>
+                <span
+                  ref={groupPickerRef}
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setGroupPickerPos({ x: rect.left, y: rect.bottom + 4 });
+                    setShowGroupPicker(prev => !prev);
+                  }}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '2px 10px', borderRadius: 4,
+                    background: 'rgba(88,166,255,0.1)',
+                    border: '1px solid rgba(88,166,255,0.25)',
+                    color: '#58a6ff', fontWeight: 500, fontSize: 12,
+                    cursor: 'pointer', userSelect: 'none',
+                    transition: 'all 0.15s',
+                    lineHeight: '20px',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(88,166,255,0.2)';
+                    e.currentTarget.style.borderColor = 'rgba(88,166,255,0.4)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(88,166,255,0.1)';
+                    e.currentTarget.style.borderColor = 'rgba(88,166,255,0.25)';
+                  }}
+                >
+                  {dialog.groupName || '根目录'}
+                  <span style={{ fontSize: 8, opacity: 0.7 }}>▼</span>
+                </span>
               </div>
             )}
 
@@ -1393,7 +1440,7 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
             {/* 按钮 */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
-                onClick={() => setDialog(null)}
+                onClick={() => { setShowGroupPicker(false); setDialog(null); }}
                 style={{ background: 'transparent', border: '1px solid #30363d', color: '#8b949e', borderRadius: 4, padding: '5px 16px', fontSize: 12, cursor: 'pointer' }}
               >取消</button>
               <button
@@ -1408,6 +1455,67 @@ const QuickCommands = forwardRef(function QuickCommands({ sessionId, addToast, c
               >保存</button>
             </div>
           </div>
+
+          {/* ── 分组选择器下拉菜单 ── */}
+          {showGroupPicker && (
+            <>
+              {/* 点击外部关闭 */}
+              <div
+                onClick={() => setShowGroupPicker(false)}
+                style={{ position: 'fixed', inset: 0, zIndex: 301, background: 'transparent' }}
+              />
+              {/* 下拉列表 */}
+              <div style={{
+                position: 'fixed', left: groupPickerPos.x, top: groupPickerPos.y, zIndex: 302,
+                minWidth: 160, maxHeight: 220, overflowY: 'auto',
+                background: '#1c2128', border: '1px solid #30363d', borderRadius: 6,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: '4px 0',
+              }}>
+                {/* 根目录 */}
+                <div
+                  onClick={() => {
+                    setDialog(prev => ({ ...prev, targetChildren: prev.parentList, groupName: '' }));
+                    setShowGroupPicker(false);
+                  }}
+                  style={{
+                    padding: '5px 14px', fontSize: 12, color: '#cdd9e5', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(88,166,255,0.08)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >📁 根目录</div>
+                {/* 所有分组 */}
+                {(() => {
+                  const groups = collectGroups(commands);
+                  return groups.length === 0 ? (
+                    <div style={{ padding: '6px 14px', fontSize: 11, color: '#484f58' }}>暂无分组</div>
+                  ) : groups.map((g, i) => (
+                    <div
+                      key={i}
+                      onClick={() => {
+                        setDialog(prev => {
+                          const list = JSON.parse(JSON.stringify(prev.parentList));
+                          const r = resolvePath(list, g.path);
+                          if (r?.item?.type === 'group') {
+                            if (!r.item.children) r.item.children = [];
+                            return { ...prev, parentList: list, targetChildren: r.item.children, groupName: g.name };
+                          }
+                          return prev;
+                        });
+                        setShowGroupPicker(false);
+                      }}
+                      style={{
+                        padding: '5px 14px', fontSize: 12, color: '#cdd9e5', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(88,166,255,0.08)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >📁 {g.name}</div>
+                  ));
+                })()}
+              </div>
+            </>
+          )}
         </>
       )}
 
