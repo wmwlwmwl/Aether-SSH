@@ -61,11 +61,21 @@ export default function GlobalContextMenu() {
           targetInput.dispatchEvent(new Event('input', { bubbles: true }));
         }
       } else if (action === 'paste') {
-        const text = await runtime.ClipboardGetText();
+        let text;
+        try {
+          text = await runtime.ClipboardGetText();
+        } catch {}
+        if (!text) {
+          try { text = await navigator.clipboard.readText(); } catch {}
+        }
         if (text) {
           const start = targetInput.selectionStart;
           const end = targetInput.selectionEnd;
-          targetInput.setRangeText(text, start, end, 'end');
+          // 使用原生 setter 以兼容 React 受控输入框
+          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          nativeSetter.call(targetInput, 
+            targetInput.value.substring(0, start) + text + targetInput.value.substring(end)
+          );
           targetInput.dispatchEvent(new Event('input', { bubbles: true }));
         }
       } else if (action === 'selectAll') {

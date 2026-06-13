@@ -28,7 +28,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
         ...defaultForm,
         ...server,
         authType: server.authMethod ? (server.authMethod === 'privateKey' ? 'key' : 'password') : (server.authType || 'password'),
-        password: server.password || '',
+        password: '',       // 编辑时不回填密码，留空则不修改
         passphrase: server.passphrase || '',
       });
     } else {
@@ -144,7 +144,7 @@ export default function AddServerModal({ server, onSave, onClose }) {
                 {form.authType === 'password' ? (
                   <div className="form-group" style={{ position: 'relative' }}>
                     <label className="form-label">
-                      {t('密码')} *
+                      {server ? '新密码（留空则不修改）' : '密码'} *
                     </label>
                     <input
                       className="input"

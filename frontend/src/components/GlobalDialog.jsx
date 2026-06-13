@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 
 export default function GlobalDialog() {
   const [dialogs, setDialogs] = useState([]);
@@ -92,6 +93,7 @@ export default function GlobalDialog() {
 function DialogContent({ current, onClose, onConfirm, onChoice }) {
   const [inputValue, setInputValue] = useState(current.defaultValue || '');
   const [checked, setChecked] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <div className="modal modal-sm" style={{ padding: 32, textAlign: 'center' }}>
@@ -104,18 +106,56 @@ function DialogContent({ current, onClose, onConfirm, onChoice }) {
       
       {current.type === 'prompt' && (
         <>
-          <input 
-            autoFocus
-            className="input" 
-            style={{ width: '100%', marginBottom: current.checkboxLabel ? 12 : 28, textAlign: 'center', fontSize: 16, padding: '12px 16px' }}
-            value={inputValue}
-            onChange={e => setInputValue(e.target.value)}
-            type={current.checkboxLabel ? 'password' : 'text'}
-            onKeyDown={e => {
-              if (e.key === 'Enter') onConfirm(inputValue, checked);
-              if (e.key === 'Escape') onClose();
-            }}
-          />
+          <div style={{ position: 'relative', marginBottom: current.checkboxLabel ? 12 : 28 }}>
+            <input 
+              autoFocus
+              className="input" 
+              style={{ width: '100%', textAlign: 'center', fontSize: 16, padding: '12px 60px 12px 16px' }}
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              type={current.checkboxLabel && !showPassword ? 'password' : 'text'}
+              onKeyDown={e => {
+                if (e.key === 'Enter') onConfirm(inputValue, checked);
+                if (e.key === 'Escape') onClose();
+              }}
+            />
+            <button
+              type="button"
+              title={showPassword ? '隐藏密码' : '显示密码'}
+              onClick={() => setShowPassword(!showPassword)}
+              style={{
+                position: 'absolute', right: 42, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer',
+                padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 16, lineHeight: 1, borderRadius: 4, transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(88,166,255,0.12)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+            <button
+              onClick={async () => {
+                try {
+                  const text = await navigator.clipboard.readText();
+                  if (text) setInputValue(text);
+                } catch {
+                  try {
+                    const { ClipboardGetText } = await import('../../wailsjs/runtime/runtime.js');
+                    const text = await ClipboardGetText();
+                    if (text) setInputValue(text);
+                  } catch {}
+                }
+              }}
+              title="粘贴"
+              style={{
+                position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer',
+                padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 16, lineHeight: 1, borderRadius: 4, transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(88,166,255,0.12)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >📋</button>
+          </div>
           {current.checkboxLabel && (
             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 28, fontSize: 13, color: 'var(--text-3)', cursor: 'pointer' }}>
               <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} />
