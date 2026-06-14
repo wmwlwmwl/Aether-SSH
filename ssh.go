@@ -829,6 +829,8 @@ echo ---HOSTNAME---
 hostname
 echo ---IP---
 ip route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' || hostname -I 2>/dev/null | awk '{print $1}'
+echo ---CPUINFO---
+grep 'model name' /proc/cpuinfo | head -1
 echo ---CPU1---
 grep '^cpu' /proc/stat
 echo ---NET1---
@@ -1070,10 +1072,23 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 		}
 	}
 	ipAddr := ""
-	for _, l := range extractSection(lines1, "---IP---", "---CPU1---") {
+	for _, l := range extractSection(lines1, "---IP---", "---CPUINFO---") {
 		t := strings.TrimSpace(l)
 		if t != "" {
 			ipAddr = t
+			break
+		}
+	}
+
+	// ── Parse CPU model ──────────────────────────────────────────────
+	cpuModel := ""
+	for _, l := range extractSection(lines1, "---CPUINFO---", "---CPU1---") {
+		t := strings.TrimSpace(l)
+		if t != "" {
+			// "model name	: Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz"
+			if idx := strings.Index(t, ":"); idx >= 0 {
+				cpuModel = strings.TrimSpace(t[idx+1:])
+			}
 			break
 		}
 	}
@@ -1276,6 +1291,7 @@ func (m *SSHManager) GetSystemInfo(sessionId string) (map[string]interface{}, er
 		"cpu": map[string]interface{}{
 			"usage": cpuTotalUsage,
 			"cores": cpuCoreUsages,
+			"model": cpuModel,
 		},
 		"memory": map[string]interface{}{
 			"total":     memTotalMB,
