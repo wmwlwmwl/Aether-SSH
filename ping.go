@@ -39,7 +39,7 @@ func isLocalOrPrivateIP(host string) bool {
 //
 // In both cases we pick whichever sub-interval best represents the true RTT.
 func measureLatency(host string, port int) (int64, bool) {
-	target := fmt.Sprintf("%s:%d", host, port)
+	target := dialAddr(host, port)
 
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", target, 4*time.Second)

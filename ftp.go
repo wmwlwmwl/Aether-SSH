@@ -97,7 +97,7 @@ func (c *ConfigManager) SaveFTPConfig(config map[string]string) error {
 }
 
 func (c *ConfigManager) TestFTPConnection(host string, port int, username, password string) error {
-	client, err := ftp.Dial(fmt.Sprintf("%s:%d", host, port), ftp.DialWithTimeout(10*time.Second))
+	client, err := ftp.Dial(dialAddr(host, port), ftp.DialWithTimeout(10*time.Second))
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (c *ConfigManager) newFTPClient() (*ftp.ServerConn, error) {
 	if conf == nil {
 		return nil, fmt.Errorf("FTP not configured")
 	}
-	client, err := ftp.Dial(fmt.Sprintf("%s:%d", conf.Host, conf.Port), ftp.DialWithTimeout(10*time.Second))
+	client, err := ftp.Dial(dialAddr(conf.Host, conf.Port), ftp.DialWithTimeout(10*time.Second))
 	if err != nil {
 		return nil, err
 	}

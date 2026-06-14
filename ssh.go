@@ -61,6 +61,14 @@ type SSHManager struct {
 	mu               sync.Mutex
 }
 
+// dialAddr 拼接 host:port，自动处理 IPv6 地址
+// 如果 host 本身已带 [] 会先去除，避免 net.JoinHostPort 重复包裹
+func dialAddr(host string, port int) string {
+	host = strings.TrimSpace(host)
+	host = strings.Trim(host, "[]")
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
 func NewSSHManager() *SSHManager {
 	return &SSHManager{
 		sessions:         make(map[string]*SessionData),
@@ -75,7 +83,7 @@ func NewSSHManager() *SSHManager {
 func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 	// 去除密码首尾空白（防止复制粘贴带入不可见字符）
 	conn.Password = strings.TrimSpace(conn.Password)
-	connKey := fmt.Sprintf("%s@%s:%d", conn.Username, conn.Host, conn.Port)
+	connKey := fmt.Sprintf("%s@%s", conn.Username, dialAddr(conn.Host, conn.Port))
 
 	m.mu.Lock()
 	existingEntry, clientExists := m.clients[connKey]
@@ -194,7 +202,7 @@ func (m *SSHManager) Connect(sessionId string, conn Connection) error {
 			},
 		}
 
-		target := fmt.Sprintf("%s:%d", strings.TrimSpace(conn.Host), conn.Port)
+		target := dialAddr(conn.Host, conn.Port)
 		var dialErr error
 		client, dialErr = ssh.Dial("tcp", target, config)
 		if dialErr != nil {

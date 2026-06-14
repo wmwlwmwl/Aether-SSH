@@ -118,7 +118,7 @@ func (c *ConfigManager) TestSFTPConnection(host string, port int, username, pass
 		sshConfig.Auth = []ssh.AuthMethod{ssh.Password(password)}
 	}
 
-	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), sshConfig)
+	sshClient, err := ssh.Dial("tcp", dialAddr(host, port), sshConfig)
 	if err != nil {
 		return fmt.Errorf("SSH 连接失败：%v", err)
 	}
@@ -160,7 +160,7 @@ func (c *ConfigManager) newSFTPClient() (*sftp.Client, error) {
 		sshConfig.Auth = []ssh.AuthMethod{ssh.Password(conf.Password)}
 	}
 
-	sshClient, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", conf.Host, conf.Port), sshConfig)
+	sshClient, err := ssh.Dial("tcp", dialAddr(conf.Host, conf.Port), sshConfig)
 	if err != nil {
 		return nil, fmt.Errorf("SSH 连接失败：%v", err)
 	}
