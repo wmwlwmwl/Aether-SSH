@@ -606,17 +606,6 @@ export default function Terminal({ sessionId, serverId, historyServerId, status,
 
   // ── 底部命令输入栏逻辑 ──────────────────────────────────────
 
-  // 将命令追加到全局历史
-  const appendToGlobal = async (command, time) => {
-    try {
-      const raw = await AppGo.GetGlobalCommandHistory();
-      const list = JSON.parse(raw);
-      if (!Array.isArray(list)) return;
-      list.unshift({ id: Date.now() + Math.random(), command, time, source: 'input' });
-      await AppGo.SaveGlobalCommandHistory(JSON.stringify(list.slice(0, 100)));
-    } catch { /* ignore */ }
-  };
-
   // 监听清除事件（CommandHistory 标签页清空时同步）
   useEffect(() => {
     const handler = (e) => {
@@ -624,23 +613,6 @@ export default function Terminal({ sessionId, serverId, historyServerId, status,
     };
     window.addEventListener('ssh-history-cleared', handler);
     return () => window.removeEventListener('ssh-history-cleared', handler);
-  }, [serverId]);
-
-  // 实时更新历史弹窗：监听 ssh-command-history 事件
-  useEffect(() => {
-    const handler = (e) => {
-      const { sessionId: evSessionId, command, time } = e.detail || {};
-      if (evSessionId !== serverId || !command) return;
-      setHistoryList(prev => {
-        const exists = prev.some(item => item.command === command && item.time === time);
-        if (exists) return prev;
-        return [{ id: Date.now() + Math.random(), command, time, source: 'input' }, ...prev].slice(0, 100);
-      });
-      // 同时追加到全局历史
-      appendToGlobal(command, time);
-    };
-    window.addEventListener('ssh-command-history', handler);
-    return () => window.removeEventListener('ssh-command-history', handler);
   }, [serverId]);
 
   // 弹窗打开或切换模式时加载历史数据

@@ -172,7 +172,10 @@ export default function FileManager({ sessionId, addToast }) {
       setItems(data || []);
       setCurrentPath(path);
     } catch (err) {
-      addToast(`读取目录失败: ${err}`, 'error');
+      const msg = String(err).toLowerCase().includes('permission denied')
+        ? `权限不足: SFTP 仍以 ${sessionId ? '原用户' : ''} 身份运行，终端内 sudo 不影响文件管理器`
+        : `读取目录失败: ${err}`;
+      addToast(`${msg} [${path}]`, 'error');
     } finally {
       setLoading(false);
     }
@@ -181,13 +184,23 @@ export default function FileManager({ sessionId, addToast }) {
   // ── 初始化自动同步最新终端目录 ───────────────────────────
   useEffect(() => {
     const initPath = async () => {
+      let cwd;
       try {
-        const cwd = await AppGo.GetTerminalCwd(sessionId);
-        if (cwd) {
-          loadDir(cwd);
-          return;
-        }
+        cwd = await AppGo.GetTerminalCwd(sessionId);
       } catch (_) {}
+
+      if (cwd) {
+        try {
+          const data = await AppGo.ListDir(sessionId, cwd);
+          if (data) {
+            setItems(data);
+            setCurrentPath(cwd);
+            return;
+          }
+        } catch (_) {
+          // CWD 在 SFTP 下不可访问（如 chroot 环境），回退到 /
+        }
+      }
       loadDir('/');
     };
     initPath();

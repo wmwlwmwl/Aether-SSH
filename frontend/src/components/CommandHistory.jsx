@@ -40,13 +40,29 @@ export default function CommandHistory({ sessionId, historyServerId, addToast })
       if (!cmd || !String(cmd).trim()) return;
 
       const entry = { id: Date.now() + Math.random(), command: cmd, time: d.time, source: 'input' };
-      perServerRef.current = [entry, ...perServerRef.current].slice(0, 100);
+      if (perServerRef.current.length > 0 && perServerRef.current[0].command === cmd) {
+        perServerRef.current[0].time = d.time;
+      } else {
+        perServerRef.current = [entry, ...perServerRef.current].slice(0, 100);
+      }
       persist();
+
+      // 追加到全局历史（连续相同命令只更新时间）
+      AppGo.GetGlobalCommandHistory().then(raw => {
+        const list = JSON.parse(raw);
+        if (!Array.isArray(list)) return;
+        if (list.length > 0 && list[0].command === cmd) {
+          list[0].time = d.time;
+        } else {
+          list.unshift({ id: Date.now() + Math.random(), command: cmd, time: d.time, source: 'input' });
+        }
+        AppGo.SaveGlobalCommandHistory(JSON.stringify(list.slice(0, 100))).catch(() => {});
+      }).catch(() => {});
 
       if (historyMode === 'server') {
         setHistory([...perServerRef.current]);
       } else {
-        // 全局模式：刷新显示（由 Terminal 的 appendToGlobal 负责保存）
+        // 全局模式：从文件刷新显示
         AppGo.GetGlobalCommandHistory().then(raw => {
           const arr = JSON.parse(raw);
           setHistory(Array.isArray(arr) ? arr : []);
