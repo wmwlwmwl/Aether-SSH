@@ -140,6 +140,7 @@ export default function ProbePanel({ sessionId, host, addToast, enabled, onEnabl
         ip: data.ip || '',
         cpuUsage: data.cpu?.usage || 0,
         cpuCores: data.cpu?.cores || [],
+        cpuModel: data.cpu?.model || '',
         memUsed: data.memory?.used || 0,
         memTotal: data.memory?.total || 0,
         memCache: data.memory?.cache || 0,
@@ -308,12 +309,13 @@ export default function ProbePanel({ sessionId, host, addToast, enabled, onEnabl
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
           <span style={{ fontSize: 14 }}>⚡</span>
-          <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-1)', flex: 1 }}>CPU</span>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-1)', flex: 1 }}>CPU {cores.length > 0 ? `${cores.length}核` : ''}</span>
           <div style={{ width: 76, height: 24 }}>
             <Sparkline data={cpuHist} color="#6366f1" height={24} />
           </div>
           <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: '#6366f1', fontWeight: 700, width: 34, textAlign: 'right' }}>{cpuAvg}%</span>
         </div>
+        {info.cpuModel && <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginBottom: 6, wordBreak: 'break-all' }}>{info.cpuModel}</div>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {cores.map((val, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

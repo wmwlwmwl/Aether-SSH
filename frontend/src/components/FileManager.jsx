@@ -164,46 +164,45 @@ export default function FileManager({ sessionId, addToast }) {
     }
   }, [openEditFiles.length]);
 
-  const loadDir = useCallback(async (path) => {
+  const loadDir = useCallback(async (path, silent = false) => {
     setLoading(true);
     try {
       const data = await AppGo.ListDir(sessionId, path);
-      // Wails 传回的数据： name, isDirectory, size, modifyTime, rights
       setItems(data || []);
       setCurrentPath(path);
+      return true;
     } catch (err) {
-      const msg = String(err).toLowerCase().includes('permission denied')
-        ? `权限不足: SFTP 仍以 ${sessionId ? '原用户' : ''} 身份运行，终端内 sudo 不影响文件管理器`
-        : `读取目录失败: ${err}`;
-      addToast(`${msg} [${path}]`, 'error');
+      if (!silent) {
+        const msg = String(err).toLowerCase().includes('permission denied')
+          ? `权限不足: SFTP 仍以 ${sessionId ? '原用户' : ''} 身份运行，终端内 sudo 不影响文件管理器`
+          : `读取目录失败: ${err}`;
+        addToast(`${msg} [${path}]`, 'error');
+      }
+      return false;
     } finally {
       setLoading(false);
     }
   }, [sessionId, addToast]);
 
-  // ── 初始化自动同步最新终端目录 ───────────────────────────
+  // ── 初始化：依次尝试 CWD → /root → /，用第一个可访问的 ──
   useEffect(() => {
-    const initPath = async () => {
-      let cwd;
+    (async () => {
+      const paths = [];
       try {
-        cwd = await AppGo.GetTerminalCwd(sessionId);
-      } catch (_) {}
-
-      if (cwd) {
-        try {
-          const data = await AppGo.ListDir(sessionId, cwd);
-          if (data) {
-            setItems(data);
-            setCurrentPath(cwd);
-            return;
+        const cwd = await AppGo.GetTerminalCwd(sessionId);
+        if (cwd && cwd !== '/') {
+          // 跳过 Docker/系统深层路径
+          const depth = cwd.split('/').filter(Boolean).length;
+          if (depth <= 3 || cwd === '/root' || cwd.startsWith('/home/')) {
+            paths.push(cwd);
           }
-        } catch (_) {
-          // CWD 在 SFTP 下不可访问（如 chroot 环境），回退到 /
         }
+      } catch (_) {}
+      paths.push('/root', '/');
+      for (const p of paths) {
+        if (await loadDir(p, true)) return;
       }
-      loadDir('/');
-    };
-    initPath();
+    })();
   }, [sessionId, loadDir]);
 
   // ── 监听终端内的目录切换事件 ─────────────────────────────
@@ -212,11 +211,12 @@ export default function FileManager({ sessionId, addToast }) {
     if (!window.__cwdListeners) window.__cwdListeners = {};
     window.__cwdListeners[sessionId] = true;
 
-    const handleTerminalCwd = (e) => {
+    const handleTerminalCwd = async (e) => {
       if (e.detail && e.detail.sessionId === sessionId) {
         const newPath = e.detail.cwd;
         if (newPath && newPath !== currentPath) {
-          loadDir(newPath);
+          const ok = await loadDir(newPath, true);
+          if (!ok) loadDir('/');
         }
       }
     };
