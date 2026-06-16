@@ -21,6 +21,13 @@ var assets embed.FS
 //go:embed build/windows/icon.ico
 var icon []byte
 
+// forceShowWindow 唤醒隐藏到托盘的窗口，带 recover 防止 panic 导致托盘 goroutine 挂死
+func forceShowWindow(ctx context.Context) {
+	defer func() { recover() }()
+	runtime.WindowHide(ctx)
+	runtime.WindowShow(ctx)
+}
+
 func main() {
 	// 创建全局互斥锁，确保程序只能运行一个实例 (单例模式)
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
@@ -47,13 +54,13 @@ func main() {
 		// Handle left click on the tray icon to show window
 		systray.SetOnClick(func(menu systray.IMenu) {
 			if app.ctx != nil {
-				runtime.WindowShow(app.ctx)
+				forceShowWindow(app.ctx)
 			}
 		})
 
 		mShow.Click(func() {
 			if app.ctx != nil {
-				runtime.WindowShow(app.ctx)
+				forceShowWindow(app.ctx)
 			}
 		})
 
@@ -69,9 +76,9 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Aether",
-		Width:  1440,
-		Height: 900,
+		Title:     "Aether",
+		Width:     1440,
+		Height:    900,
 		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
